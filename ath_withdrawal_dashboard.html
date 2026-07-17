@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ATH 20% 인출 + 생활비 대시보드</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #0B0E14; }
+  #root { min-height: 100vh; }
+  input[type=range] { cursor: pointer; }
+  @media (max-width: 720px) {
+    .grid3 { grid-template-columns: 1fr !important; }
+    .grid5 { grid-template-columns: 1fr 1fr !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo } = React;
+const {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine
+} = Recharts;
+
+const COLORS = {
+  bg: "#0B0E14",
+  panel: "#121620",
+  panelBorder: "#1F2530",
+  text: "#D1D4DC",
+  muted: "#6B7280",
+  accent: "#4C82FB",
+  gain: "#26A69A",
+  loss: "#EF5350",
+};
+
+function simulate(initialBalance, monthlyReturnPct, months, withdrawRatePct, monthlyExpense) {
+  const r = monthlyReturnPct / 100;
+  const w = withdrawRatePct / 100;
+  let balance = initialBalance;
+  let ath = initialBalance;
+  let cumWithdrawnATH = 0;
+  let cumExpense = 0;
+  let ruinMonth = null;
+
+  const rows = [{
+    month: 0,
+    balance: Number(balance.toFixed(0)),
+    cumWithdrawnATH: 0,
+    cumExpense: 0,
+    cumTotal: 0,
+    totalWealth: Number(balance.toFixed(0)),
+  }];
+
+  for (let m = 1; m <= months; m++) {
+    if (balance > 0) {
+      balance = balance * (1 + r);
+      if (balance > ath) {
+        const excess = balance - ath;
+        const take = excess * w;
+        cumWithdrawnATH += take;
+        balance -= take;
+        ath = balance;
+      }
+      balance -= monthlyExpense;
+      cumExpense += monthlyExpense;
+      if (balance <= 0) {
+        balance = 0;
+        if (ruinMonth === null) ruinMonth = m;
+      }
+    } else {
+      cumExpense += monthlyExpense;
+    }
+
+    rows.push({
+      month: m,
+      balance: Number(balance.toFixed(0)),
+      cumWithdrawnATH: Number(cumWithdrawnATH.toFixed(0)),
+      cumExpense: Number(cumExpense.toFixed(0)),
+      cumTotal: Number((cumWithdrawnATH + cumExpense).toFixed(0)),
+      totalWealth: Number((balance + cumWithdrawnATH).toFixed(0)),
+    });
+  }
+  return { rows, ruinMonth };
+}
+
+const fmt = (n) => "$" + Math.round(n).toLocaleString("en-US");
+
+function Dashboard() {
+  const [initialBalance] = useState(17000);
+  const [monthlyReturn, setMonthlyReturn] = useState(10);
+  const [months, setMonths] = useState(12);
+  const [monthlyExpense, setMonthlyExpense] = useState(2000);
+  const withdrawRate = 20;
+
+  const { rows: data, ruinMonth } = useMemo(
+    () => simulate(initialBalance, monthlyReturn, months, withdrawRate, monthlyExpense),
+    [initialBalance, monthlyReturn, months, monthlyExpense]
+  );
+  const last = data[data.length - 1];
+
+  const labelStyle = {
+    fontSize: "11px", color: COLORS.muted, letterSpacing: "0.04em",
+    textTransform: "uppercase", fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+  };
+  const numStyle = { fontFamily: "'JetBrains Mono', ui-monospace, monospace" };
+
+  return (
+    <div style={{
+      background: COLORS.bg, color: COLORS.text,
+      fontFamily: "'Inter', -apple-system, sans-serif",
+      padding: "20px", minHeight: "100vh",
+    }}>
+      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
+        <div style={{ marginBottom: "18px" }}>
+          <div style={{ fontSize: "20px", fontWeight: 700, letterSpacing: "-0.01em" }}>
+            ATH 20% 인출 + 생활비 대시보드
+          </div>
+          <div style={{ fontSize: "12px", color: COLORS.muted, marginTop: "4px" }}>
+            초기잔고 {fmt(initialBalance)} · 전고점 갱신 시 초과분의 20% 인출 · 월 고정 생활비 차감
+          </div>
+        </div>
+
+        <div className="grid3" style={{
+          background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`,
+          borderRadius: "8px", padding: "16px", marginBottom: "16px",
+          display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "24px",
+        }}>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+              <span style={labelStyle}>월 수익률 (고정 가정)</span>
+              <span style={{ ...numStyle, fontSize: "16px", color: monthlyReturn >= 0 ? COLORS.gain : COLORS.loss }}>
+                {monthlyReturn > 0 ? "+" : ""}{monthlyReturn}%
+              </span>
+            </div>
+            <input type="range" min="-30" max="50" step="1" value={monthlyReturn}
+              onChange={(e) => setMonthlyReturn(Number(e.target.value))}
+              style={{ width: "100%", accentColor: COLORS.accent }} />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+              <span style={labelStyle}>월 고정 생활비 인출</span>
+              <span style={{ ...numStyle, fontSize: "16px", color: COLORS.loss }}>
+                ${monthlyExpense.toLocaleString("en-US")}
+              </span>
+            </div>
+            <input type="range" min="0" max="4000" step="100" value={monthlyExpense}
+              onChange={(e) => setMonthlyExpense(Number(e.target.value))}
+              style={{ width: "100%", accentColor: COLORS.loss }} />
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+              <span style={labelStyle}>기간</span>
+              <span style={{ ...numStyle, fontSize: "16px", color: COLORS.accent }}>{months}개월</span>
+            </div>
+            <input type="range" min="3" max="36" step="1" value={months}
+              onChange={(e) => setMonths(Number(e.target.value))}
+              style={{ width: "100%", accentColor: COLORS.accent }} />
+          </div>
+        </div>
+
+        {ruinMonth !== null && (
+          <div style={{
+            background: "rgba(239,83,80,0.1)", border: `1px solid ${COLORS.loss}`,
+            borderRadius: "8px", padding: "10px 14px", marginBottom: "16px",
+            fontSize: "12px", color: COLORS.loss,
+          }}>
+            ⚠ {ruinMonth}개월차에 잔고가 소진됩니다 (생활비 인출이 계좌 성장을 초과).
+          </div>
+        )}
+
+        <div className="grid5" style={{
+          display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px", marginBottom: "16px",
+        }}>
+          {[
+            { label: `${months}개월 후 거래소 잔고`, value: fmt(last.balance), color: COLORS.text },
+            { label: "누적 ATH 20% 인출", value: fmt(last.cumWithdrawnATH), color: COLORS.gain },
+            { label: "누적 생활비 인출", value: fmt(last.cumExpense), color: COLORS.loss },
+            { label: "총 누적 인출액", value: fmt(last.cumTotal), color: COLORS.accent },
+            { label: "총자산 배수", value: (last.totalWealth / initialBalance).toFixed(2) + "x", color: COLORS.accent },
+          ].map((c, i) => (
+            <div key={i} style={{
+              background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`,
+              borderRadius: "8px", padding: "14px",
+            }}>
+              <div style={labelStyle}>{c.label}</div>
+              <div style={{ ...numStyle, fontSize: "16px", color: c.color, marginTop: "6px" }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{
+          background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`,
+          borderRadius: "8px", padding: "16px", marginBottom: "16px",
+        }}>
+          <div style={{ ...labelStyle, marginBottom: "12px" }}>거래소 잔고 추이</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="balanceGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLORS.accent} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={COLORS.accent} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={COLORS.panelBorder} />
+              <XAxis dataKey="month" stroke={COLORS.muted} fontSize={11} tickFormatter={(m) => `${m}M`} />
+              <YAxis stroke={COLORS.muted} fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <Tooltip
+                contentStyle={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, fontSize: 12 }}
+                formatter={(v) => [fmt(v), "잔고"]}
+                labelFormatter={(m) => `${m}개월차`} />
+              <ReferenceLine y={initialBalance} stroke={COLORS.muted} strokeDasharray="4 3" />
+              <Area type="monotone" dataKey="balance" stroke={COLORS.accent} strokeWidth={2} fill="url(#balanceGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div style={{
+          background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`,
+          borderRadius: "8px", padding: "16px",
+        }}>
+          <div style={{ ...labelStyle, marginBottom: "4px" }}>누적 출금액 추이</div>
+          <div style={{ display: "flex", gap: "16px", marginBottom: "10px", fontSize: "11px" }}>
+            <span style={{ color: COLORS.gain }}>■ ATH 20% 인출</span>
+            <span style={{ color: COLORS.loss }}>■ 생활비 인출</span>
+          </div>
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="withdrawGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLORS.gain} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={COLORS.gain} stopOpacity={0.15} />
+                </linearGradient>
+                <linearGradient id="expenseGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLORS.loss} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={COLORS.loss} stopOpacity={0.15} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={COLORS.panelBorder} />
+              <XAxis dataKey="month" stroke={COLORS.muted} fontSize={11} tickFormatter={(m) => `${m}M`} />
+              <YAxis stroke={COLORS.muted} fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <Tooltip
+                contentStyle={{ background: COLORS.panel, border: `1px solid ${COLORS.panelBorder}`, fontSize: 12 }}
+                formatter={(v, name) => [fmt(v), name === "cumWithdrawnATH" ? "ATH 20% 인출" : "생활비 인출"]}
+                labelFormatter={(m) => `${m}개월차`} />
+              <Area type="monotone" dataKey="cumExpense" stackId="w" stroke={COLORS.loss} strokeWidth={1.5} fill="url(#expenseGrad)" />
+              <Area type="monotone" dataKey="cumWithdrawnATH" stackId="w" stroke={COLORS.gain} strokeWidth={1.5} fill="url(#withdrawGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "14px", lineHeight: 1.6, paddingBottom: "30px" }}>
+          월 수익률은 매달 동일하다고 가정한 결정론적 시나리오입니다. 매달 (1) 수익률 반영 → (2) ATH 갱신 시 초과분의 20% 인출 → (3) 고정 생활비 차감 순으로 계산됩니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Dashboard />);
+</script>
+</body>
+</html>
