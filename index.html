@@ -283,7 +283,7 @@ function Dashboard() {
               <span className="lbl">월 고정 생활비 인출</span>
               <span className="num" style={{ fontSize: "16px", color: COLORS.loss }}>${monthlyExpense.toLocaleString("en-US")}</span>
             </div>
-            <input type="range" min="0" max="4000" step="100" value={monthlyExpense}
+            <input type="range" min="0" max="10000" step="100" value={monthlyExpense}
               onChange={(e) => setMonthlyExpense(Number(e.target.value))} style={{ accentColor: COLORS.loss }} />
           </div>
           <div>
@@ -291,7 +291,7 @@ function Dashboard() {
               <span className="lbl">기간</span>
               <span className="num" style={{ fontSize: "16px", color: COLORS.accent }}>{months}개월</span>
             </div>
-            <input type="range" min="3" max="36" step="1" value={months}
+            <input type="range" min="3" max="120" step="1" value={months}
               onChange={(e) => setMonths(Number(e.target.value))} style={{ accentColor: COLORS.accent }} />
           </div>
         </div>
