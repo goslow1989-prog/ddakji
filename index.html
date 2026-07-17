@@ -622,7 +622,7 @@ function computeTotalUSD(row) {
   const tether = n(row.tether) || 1;
   const krwSum = n(row.kiwoom) + n(row.upbit) + n(row.bithumb);
   const usdSum = n(row.binance) + n(row.bitget) + n(row.hyperliquid);
-  return krwSum / tether + usdSum;
+  return krwSum / tether + usdSum + n(row.flow);
 }
 
 function useUpbitTetherCandles() {
