@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ATH 20% 인출 + 단계별 생활비 대시보드</title>
+<title>자산 관리 대시보드</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -12,19 +12,36 @@
   html, body { margin: 0; padding: 0; background: #0B0E14; }
   #root { min-height: 100vh; }
   input[type=range] { cursor: pointer; width: 100%; }
-  input[type=number] {
+  input[type=number], input[type=date], input[type=text], select {
     background:#0B0E14; border:1px solid #1F2530; color:#D1D4DC;
     border-radius:6px; padding:6px 8px; font-family:'JetBrains Mono', ui-monospace, monospace;
     font-size:13px; width:100%;
   }
-  input[type=number]:focus { outline:1px solid #4C82FB; }
+  input:focus, select:focus { outline:1px solid #4C82FB; }
   .card { background:#121620; border:1px solid #1F2530; border-radius:8px; padding:16px; }
   .lbl { font-size:11px; color:#6B7280; letter-spacing:0.04em; text-transform:uppercase; font-family:'JetBrains Mono', ui-monospace, monospace; }
   .num { font-family:'JetBrains Mono', ui-monospace, monospace; }
+  .tabBtn { background:transparent; border:1px solid #1F2530; color:#6B7280; padding:8px 16px; border-radius:6px; font-size:13px; cursor:pointer; font-family:'Inter',sans-serif; text-align:left; }
+  .tabBtnActive { background:#121620; border:1px solid #4C82FB; color:#D1D4DC; }
+  .navBtn { background:transparent; border:none; color:#6B7280; padding:10px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-family:'Inter',sans-serif; text-align:left; width:100%; }
+  .navBtnActive { background:#181D28; color:#4C82FB; font-weight:600; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px 10px; font-size:12px; border-bottom:1px solid #1F2530; white-space:nowrap; }
+  th { color:#6B7280; text-align:left; font-family:'JetBrains Mono', monospace; font-weight:500; }
+  td { font-family:'JetBrains Mono', monospace; color:#D1D4DC; }
+  .smallBtn { background:#1F2530; border:none; color:#D1D4DC; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer; }
+  .smallBtn:hover { background:#2A3140; }
+  .tableWrap { overflow-x: auto; }
+  @media (max-width: 900px) {
+    .layoutRoot { flex-direction: column !important; }
+    .sidebar { width: 100% !important; flex-direction:row !important; overflow-x:auto; }
+  }
   @media (max-width: 720px) {
     .grid3 { grid-template-columns: 1fr !important; }
     .grid5 { grid-template-columns: 1fr 1fr !important; }
     .tierRow { grid-template-columns: 1fr 1fr !important; }
+    .pieRow { grid-template-columns: 1fr !important; }
+    .entryForm { grid-template-columns: 1fr 1fr !important; }
   }
 </style>
 </head>
@@ -32,36 +49,60 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState, useMemo, useRef } = React;
+const { useState, useMemo, useRef, useEffect } = React;
 
 const COLORS = {
   bg: "#0B0E14", panel: "#121620", panelBorder: "#1F2530",
   text: "#D1D4DC", muted: "#6B7280", accent: "#4C82FB",
   gain: "#26A69A", loss: "#EF5350",
 };
+const PHASE_COLORS = ["#4C82FB", "#26A69A", "#F2B84B", "#EF5350", "#B084F2", "#4BD0E0"];
+const PIE_COLORS = ["#4C82FB", "#26A69A", "#F2B84B", "#EF5350", "#B084F2", "#4BD0E0", "#FF8A65", "#90CAF9", "#A5D6A7", "#CE93D8"];
 
-function getExpenseForBalance(balance, tiers, aboveAmount) {
-  for (const t of tiers) {
-    if (balance < t.limit) return t.amount;
-  }
-  return aboveAmount;
+// ---------- localStorage helpers ----------
+function loadLS(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    return JSON.parse(v);
+  } catch (e) { return fallback; }
+}
+function saveLS(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+}
+function usePersistentState(key, fallback) {
+  const [state, setState] = useState(() => loadLS(key, fallback));
+  useEffect(() => { saveLS(key, state); }, [key, state]);
+  return [state, setState];
 }
 
-function simulate(initialBalance, monthlyReturnPct, months, withdrawRatePct, tiers, aboveAmount) {
-  const r = monthlyReturnPct / 100;
+// ---------- formatters ----------
+const fmt = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
+const fmtExact = (n) => (n < 0 ? "-$" : "$") + Math.abs(Math.trunc(n || 0)).toLocaleString("en-US");
+const krwFmt = (n) => "₩" + Math.round(n || 0).toLocaleString("en-US");
+const fmtCompact = (n) => {
+  if (Math.abs(n) >= 1000000) return "$" + (n / 1000000).toFixed(2) + "M";
+  return "$" + (n / 1000).toFixed(0) + "k";
+};
+
+function getExpenseForBalance(balance, tiers, aboveAmount) {
+  for (const t of tiers) if (balance < t.limit) return t.amount;
+  return aboveAmount;
+}
+function getRateForMonth(m, boundaries, rates) {
+  for (let i = 0; i < boundaries.length; i++) if (m <= boundaries[i]) return rates[i];
+  return rates[rates.length - 1];
+}
+function simulate(initialBalance, boundaries, rates, months, withdrawRatePct, tiers, aboveAmount) {
   const w = withdrawRatePct / 100;
   let balance = initialBalance;
   let ath = initialBalance;
   let cumWithdrawnATH = 0;
   let cumExpense = 0;
   let ruinMonth = null;
-
-  const rows = [{
-    month: 0, balance, cumWithdrawnATH: 0, cumExpense: 0, cumTotal: 0,
-    totalWealth: balance, expenseThisMonth: 0,
-  }];
-
+  const rows = [{ month: 0, balance, cumWithdrawnATH: 0, cumExpense: 0, cumTotal: 0, totalWealth: balance, expenseThisMonth: 0, rate: rates[0] }];
   for (let m = 1; m <= months; m++) {
+    const r = getRateForMonth(m, boundaries, rates) / 100;
     let expenseThisMonth = 0;
     if (balance > 0) {
       balance = balance * (1 + r);
@@ -75,65 +116,44 @@ function simulate(initialBalance, monthlyReturnPct, months, withdrawRatePct, tie
       expenseThisMonth = getExpenseForBalance(balance, tiers, aboveAmount);
       balance -= expenseThisMonth;
       cumExpense += expenseThisMonth;
-      if (balance <= 0) {
-        balance = 0;
-        if (ruinMonth === null) ruinMonth = m;
-      }
+      if (balance <= 0) { balance = 0; if (ruinMonth === null) ruinMonth = m; }
     } else {
       expenseThisMonth = getExpenseForBalance(0, tiers, aboveAmount);
       cumExpense += expenseThisMonth;
     }
     rows.push({
-      month: m,
-      balance: Number(balance.toFixed(0)),
-      cumWithdrawnATH: Number(cumWithdrawnATH.toFixed(0)),
-      cumExpense: Number(cumExpense.toFixed(0)),
-      cumTotal: Number((cumWithdrawnATH + cumExpense).toFixed(0)),
-      totalWealth: Number((balance + cumWithdrawnATH).toFixed(0)),
-      expenseThisMonth: Number(expenseThisMonth.toFixed(0)),
+      month: m, balance: Number(balance.toFixed(0)),
+      cumWithdrawnATH: Number(cumWithdrawnATH.toFixed(0)), cumExpense: Number(cumExpense.toFixed(0)),
+      cumTotal: Number((cumWithdrawnATH + cumExpense).toFixed(0)), totalWealth: Number((balance + cumWithdrawnATH).toFixed(0)),
+      expenseThisMonth: Number(expenseThisMonth.toFixed(0)), rate: getRateForMonth(m, boundaries, rates),
     });
   }
   return { rows, ruinMonth };
 }
 
-const fmt = (n) => "$" + Math.round(n).toLocaleString("en-US");
-const fmtCompact = (n) => {
-  const abs = Math.abs(n);
-  if (abs >= 1000000) return "$" + (n / 1000000).toFixed(2) + "M";
-  return "$" + (n / 1000).toFixed(0) + "k";
-};
-
-// ---- Pure-SVG chart components ----
-
+// ---- Pure-SVG chart components (leaderboard, month-index based) ----
 function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
   const W = 800, H = height;
   const padL = 55, padR = 10, padT = 10, padB = 24;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const containerRef = useRef(null);
   const [hover, setHover] = useState(null);
-
   const values = data.map(d => d[dataKey]);
   const maxY = Math.max(...values, refValue || 0) * 1.1 || 1;
   const minY = Math.min(0, Math.min(...values));
-
   const x = (i) => padL + (i / (data.length - 1)) * innerW;
   const y = (v) => padT + innerH - ((v - minY) / (maxY - minY)) * innerH;
-
   const linePath = data.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d[dataKey])}`).join(" ");
   const areaPath = `${linePath} L ${x(data.length - 1)} ${y(minY)} L ${x(0)} ${y(minY)} Z`;
   const gid = "grad-" + dataKey;
-
   const handleMove = (e) => {
     const rect = containerRef.current.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     setHover(Math.round(frac * (data.length - 1)));
   };
-
   const tickEvery = Math.max(1, Math.ceil(data.length / 6));
-
   return (
-    <div ref={containerRef} style={{ position: "relative" }}
-      onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+    <div ref={containerRef} style={{ position: "relative" }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
@@ -142,25 +162,17 @@ function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
           </linearGradient>
         </defs>
         {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
-          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f}
-            stroke="#1F2530" strokeDasharray="3 3" />
+          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
         ))}
         {[0, 0.5, 1].map((f, i) => {
           const val = maxY - f * (maxY - minY);
-          return (
-            <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end"
-              fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtCompact(val)}</text>
-          );
+          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtCompact(val)}</text>;
         })}
-        {refValue != null && (
-          <line x1={padL} x2={W - padR} y1={y(refValue)} y2={y(refValue)} stroke="#6B7280" strokeDasharray="4 3" />
-        )}
+        {refValue != null && <line x1={padL} x2={W - padR} y1={y(refValue)} y2={y(refValue)} stroke="#6B7280" strokeDasharray="4 3" />}
         <path d={areaPath} fill={`url(#${gid})`} />
         <path d={linePath} fill="none" stroke={color} strokeWidth="2" />
-        {data.map((d, i) => (
-          i % tickEvery === 0 && (
-            <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{d.month}M</text>
-          )
+        {data.map((d, i) => i % tickEvery === 0 && (
+          <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{d.month}M</text>
         ))}
         {hover !== null && (
           <>
@@ -170,12 +182,8 @@ function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
         )}
       </svg>
       {hover !== null && (
-        <div style={{
-          position: "absolute", top: 4, right: 4, background: "#0B0E14",
-          border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px",
-          fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none",
-        }}>
-          {data[hover].month}개월차: {fmt(data[hover][dataKey])}
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none" }}>
+          {data[hover].month}개월차: {fmt(data[hover][dataKey])} (수익률 {data[hover].rate}%)
         </div>
       )}
     </div>
@@ -188,28 +196,22 @@ function StackedAreaChart({ data, height = 240 }) {
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const containerRef = useRef(null);
   const [hover, setHover] = useState(null);
-
   const maxY = Math.max(...data.map(d => d.cumTotal)) * 1.1 || 1;
   const x = (i) => padL + (i / (data.length - 1)) * innerW;
   const y = (v) => padT + innerH - (v / maxY) * innerH;
-
   const bottomLine = data.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d.cumExpense)}`).join(" ");
   const bottomArea = `${bottomLine} L ${x(data.length - 1)} ${y(0)} L ${x(0)} ${y(0)} Z`;
   const topLine = data.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d.cumTotal)}`).join(" ");
   const topAreaRev = data.slice().reverse().map((d, i) => `L ${x(data.length - 1 - i)} ${y(d.cumExpense)}`).join(" ");
   const topArea = `${topLine} ${topAreaRev} Z`;
-
   const handleMove = (e) => {
     const rect = containerRef.current.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     setHover(Math.round(frac * (data.length - 1)));
   };
-
   const tickEvery = Math.max(1, Math.ceil(data.length / 6));
-
   return (
-    <div ref={containerRef} style={{ position: "relative" }}
-      onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+    <div ref={containerRef} style={{ position: "relative" }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
         <defs>
           <linearGradient id="gradExpense" x1="0" y1="0" x2="0" y2="1">
@@ -222,35 +224,23 @@ function StackedAreaChart({ data, height = 240 }) {
           </linearGradient>
         </defs>
         {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
-          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f}
-            stroke="#1F2530" strokeDasharray="3 3" />
+          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
         ))}
         {[0, 0.5, 1].map((f, i) => {
           const val = maxY * (1 - f);
-          return (
-            <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end"
-              fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtCompact(val)}</text>
-          );
+          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtCompact(val)}</text>;
         })}
         <path d={bottomArea} fill="url(#gradExpense)" />
         <path d={bottomLine} fill="none" stroke={COLORS.loss} strokeWidth="1.5" />
         <path d={topArea} fill="url(#gradATH)" />
         <path d={topLine} fill="none" stroke={COLORS.gain} strokeWidth="1.5" />
-        {data.map((d, i) => (
-          i % tickEvery === 0 && (
-            <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{d.month}M</text>
-          )
+        {data.map((d, i) => i % tickEvery === 0 && (
+          <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{d.month}M</text>
         ))}
-        {hover !== null && (
-          <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + innerH} stroke="#4C82FB" strokeWidth="1" />
-        )}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + innerH} stroke="#4C82FB" strokeWidth="1" />}
       </svg>
       {hover !== null && (
-        <div style={{
-          position: "absolute", top: 4, right: 4, background: "#0B0E14",
-          border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px",
-          fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none", lineHeight: 1.6,
-        }}>
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none", lineHeight: 1.6 }}>
           <div>{data[hover].month}개월차</div>
           <div style={{ color: COLORS.gain }}>ATH 인출: {fmt(data[hover].cumWithdrawnATH)}</div>
           <div style={{ color: COLORS.loss }}>생활비: {fmt(data[hover].cumExpense)} (이달 {fmt(data[hover].expenseThisMonth)})</div>
@@ -267,7 +257,6 @@ function TierEditor({ tiers, setTiers, aboveAmount, setAboveAmount }) {
     setTiers(next);
   };
   const labelStyle = { fontSize: "11px", color: COLORS.muted, marginBottom: "4px", fontFamily: "monospace" };
-
   return (
     <div className="card" style={{ marginBottom: "16px" }}>
       <div className="lbl" style={{ marginBottom: "12px" }}>거래소 시드 구간별 생활비 설정</div>
@@ -276,178 +265,798 @@ function TierEditor({ tiers, setTiers, aboveAmount, setAboveAmount }) {
           const prevLimit = i === 0 ? 0 : tiers[i - 1].limit;
           return (
             <div key={i} className="tierRow" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", alignItems: "end" }}>
-              <div>
-                <div style={labelStyle}>구간 {i + 1}: 잔고 범위</div>
-                <div style={{ fontSize: "13px", color: COLORS.text }}>
-                  {fmtCompact(prevLimit)} ~ 미만
-                </div>
-              </div>
-              <div>
-                <div style={labelStyle}>이 구간 상한 ($)</div>
-                <input type="number" step="10000" value={t.limit}
-                  onChange={(e) => updateTier(i, "limit", e.target.value)} />
-              </div>
-              <div>
-                <div style={labelStyle}>이 구간 월 생활비 ($)</div>
-                <input type="number" step="100" value={t.amount}
-                  onChange={(e) => updateTier(i, "amount", e.target.value)} />
-              </div>
+              <div><div style={labelStyle}>구간 {i + 1}: 잔고 범위</div><div style={{ fontSize: "13px", color: COLORS.text }}>{fmtCompact(prevLimit)} ~ 미만</div></div>
+              <div><div style={labelStyle}>이 구간 상한 ($)</div><input type="number" step="10000" value={t.limit} onChange={(e) => updateTier(i, "limit", e.target.value)} /></div>
+              <div><div style={labelStyle}>이 구간 월 생활비 ($)</div><input type="number" step="100" value={t.amount} onChange={(e) => updateTier(i, "amount", e.target.value)} /></div>
             </div>
           );
         })}
         <div className="tierRow" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", alignItems: "end" }}>
-          <div>
-            <div style={labelStyle}>최상위 구간</div>
-            <div style={{ fontSize: "13px", color: COLORS.text }}>{fmtCompact(tiers[tiers.length - 1].limit)} 이상</div>
-          </div>
+          <div><div style={labelStyle}>최상위 구간</div><div style={{ fontSize: "13px", color: COLORS.text }}>{fmtCompact(tiers[tiers.length - 1].limit)} 이상</div></div>
           <div />
-          <div>
-            <div style={labelStyle}>월 생활비 ($)</div>
-            <input type="number" step="100" value={aboveAmount}
-              onChange={(e) => setAboveAmount(Number(e.target.value))} />
-          </div>
+          <div><div style={labelStyle}>월 생활비 ($)</div><input type="number" step="100" value={aboveAmount} onChange={(e) => setAboveAmount(Number(e.target.value))} /></div>
         </div>
       </div>
-      <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "10px" }}>
-        매달 그 시점의 거래소 잔고(ATH 인출 이후)를 기준으로 구간을 판정해 생활비를 차감합니다.
+      <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "10px" }}>매달 그 시점의 거래소 잔고(ATH 인출 이후)를 기준으로 구간을 판정해 생활비를 차감합니다.</div>
+    </div>
+  );
+}
+
+function PhaseEditor({ boundaries, setBoundaries, rates, setRates, months, setMonths }) {
+  const barRef = useRef(null);
+  const dragIdx = useRef(null);
+  const onMouseDown = (i) => (e) => {
+    e.preventDefault();
+    dragIdx.current = i;
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+  const onMouseMove = (e) => {
+    if (dragIdx.current === null || !barRef.current) return;
+    const i = dragIdx.current;
+    const rect = barRef.current.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    let m = Math.round(frac * months);
+    const lowerBound = i === 0 ? 1 : boundaries[i - 1] + 1;
+    const upperBound = i === boundaries.length - 1 ? months - 1 : boundaries[i + 1] - 1;
+    m = Math.min(upperBound, Math.max(lowerBound, m));
+    setBoundaries(prev => { const next = prev.slice(); next[i] = m; return next; });
+  };
+  const onMouseUp = () => {
+    dragIdx.current = null;
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+  };
+  useEffect(() => () => {
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+  }, []);
+  const addPhase = () => {
+    const lastBoundary = boundaries.length ? boundaries[boundaries.length - 1] : 0;
+    const mid = Math.min(months - 1, lastBoundary + Math.max(1, Math.floor((months - lastBoundary) / 2)));
+    if (mid <= lastBoundary) return;
+    setBoundaries([...boundaries, mid]);
+    setRates([...rates, rates[rates.length - 1]]);
+  };
+  const removePhase = () => {
+    if (boundaries.length <= 1) return;
+    setBoundaries(boundaries.slice(0, -1));
+    setRates(rates.slice(0, -1));
+  };
+  const updateRate = (i, v) => {
+    const next = rates.slice();
+    next[i] = Number(v);
+    setRates(next);
+  };
+  const segStarts = [1, ...boundaries.map(b => b + 1)];
+  const segEnds = [...boundaries, months];
+  return (
+    <div className="card" style={{ marginBottom: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+        <span className="lbl">기간별 목표 수익률 (드래그로 구간 조정)</span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button className="tabBtn" onClick={removePhase}>- 구간 삭제</button>
+          <button className="tabBtn" onClick={addPhase}>+ 구간 추가</button>
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+        <span className="lbl">총 시뮬레이션 기간</span>
+        <span className="num" style={{ fontSize: "14px", color: COLORS.accent }}>{months}개월 ({(months / 12).toFixed(1)}년)</span>
+      </div>
+      <input type="range" min="3" max="120" step="1" value={months} onChange={(e) => setMonths(Number(e.target.value))} style={{ accentColor: COLORS.accent, marginBottom: "18px" }} />
+      <div ref={barRef} style={{ position: "relative", height: "56px", borderRadius: "6px", overflow: "hidden", display: "flex" }}>
+        {segStarts.map((s, i) => {
+          const e = segEnds[i];
+          const widthPct = ((e - s + 1) / months) * 100;
+          return (
+            <div key={i} style={{ width: `${widthPct}%`, background: PHASE_COLORS[i % PHASE_COLORS.length] + "33", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }}>
+              <div style={{ fontSize: "10px", color: COLORS.muted, fontFamily: "monospace" }}>{s}~{e}M</div>
+              <input type="number" value={rates[i]} onChange={(ev) => updateRate(i, ev.target.value)} style={{ width: "56px", textAlign: "center", padding: "3px", fontSize: "13px", marginTop: "2px" }} />
+            </div>
+          );
+        })}
+        {boundaries.map((b, i) => (
+          <div key={i} onMouseDown={onMouseDown(i)} title={`${b}개월차 경계 (드래그)`}
+            style={{ position: "absolute", top: 0, bottom: 0, left: `${(b / months) * 100}%`, width: "6px", marginLeft: "-3px", background: COLORS.accent, cursor: "col-resize", borderRadius: "3px", zIndex: 5 }} />
+        ))}
+      </div>
+      <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "10px" }}>파란 막대(경계선)를 좌우로 드래그해서 구간 길이를 조정하세요. 각 구간 안의 숫자는 그 구간의 월 목표 수익률(%)이며 직접 입력해도 됩니다. 마지막 구간의 수익률은 그 이후 남은 기간에도 계속 적용됩니다.</div>
+    </div>
+  );
+}
+
+const QUOTES = [
+  { text: "돈을 잃지 않는 것이 제1원칙이고, 제1원칙을 잊지 않는 것이 제2원칙이라고 강조했습니다.", author: "워런 버핏" },
+  { text: "얼마나 자주 맞고 틀리는지가 아니라, 맞았을 때 얼마를 벌고 틀렸을 때 얼마를 잃는지가 중요하다고 말했습니다.", author: "조지 소로스" },
+  { text: "매일 아침 가장 먼저 하는 일은 얼마를 벌 수 있는지가 아니라 얼마를 지킬 수 있는지를 생각하는 것이라고 밝혔습니다.", author: "폴 튜더 존스" },
+  { text: "투기에서 살아남으려면 손실을 빨리, 그리고 작게 끊어내는 습관이 무엇보다 중요하다고 강조했습니다.", author: "제시 리버모어" },
+  { text: "투자의 핵심은 매입가보다 충분히 낮은 가격에 사서 안전마진을 확보하는 데 있다고 설명했습니다.", author: "벤저민 그레이엄" },
+  { text: "돈을 버는 것보다 잃지 않는 자본을 지키는 것이 장기적으로 부를 쌓는 더 확실한 방법이라고 말했습니다.", author: "버나드 바루크" },
+  { text: "무리한 베팅으로 파산할 위험을 감수하느니, 다소 낮은 수익률이라도 살아남는 쪽을 항상 택해야 한다고 주장했습니다.", author: "나심 니콜라스 탈레브" },
+  { text: "투자에서 리스크란 일어날 수 있는 일의 가짓수가 실제로 일어난 일보다 훨씬 많다는 뜻이라고 정의했습니다.", author: "하워드 막스" },
+  { text: "큰 손실 한 번이 그동안 쌓아온 여러 번의 수익을 한꺼번에 무너뜨릴 수 있다고 경고했습니다.", author: "짐 로저스" },
+];
+
+function QuotesTab() {
+  return (
+    <div className="card">
+      <div className="lbl" style={{ marginBottom: "14px" }}>버는 것보다 잃지 않는 것 — 자본 보존에 관한 투자 명언</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+        {QUOTES.map((q, i) => (
+          <div key={i} style={{ background: COLORS.bg, borderRadius: "8px", padding: "14px 16px", borderLeft: `3px solid ${PHASE_COLORS[i % PHASE_COLORS.length]}` }}>
+            <div style={{ fontSize: "14px", color: COLORS.text, lineHeight: 1.6 }}>{q.text}</div>
+            <div style={{ fontSize: "12px", color: COLORS.muted, marginTop: "8px", fontFamily: "monospace" }}>({q.author})</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "16px", lineHeight: 1.6 }}>널리 알려진 발언을 요지 위주로 정리한 것으로, 정확한 원문 표현과는 다를 수 있습니다.</div>
+    </div>
+  );
+}
+
+// ---- New chart primitives for Asset Tracker (date-indexed, exact numbers) ----
+function DateLineChart({ points, labels, color, height = 220, refValue }) {
+  const W = 800, H = height;
+  const padL = 70, padR = 10, padT = 14, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const containerRef = useRef(null);
+  const [hover, setHover] = useState(null);
+  if (!points.length) return <div style={{ color: COLORS.muted, fontSize: 12, padding: 20 }}>데이터가 없습니다. 아래에서 첫 기록을 추가하세요.</div>;
+  const maxY = Math.max(...points, refValue || 0) * 1.08 || 1;
+  const minY = Math.min(0, Math.min(...points)) * (Math.min(...points) < 0 ? 1.08 : 1);
+  const x = (i) => points.length === 1 ? padL + innerW / 2 : padL + (i / (points.length - 1)) * innerW;
+  const y = (v) => padT + innerH - ((v - minY) / (maxY - minY || 1)) * innerH;
+  const linePath = points.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
+  const areaPath = `${linePath} L ${x(points.length - 1)} ${y(minY)} L ${x(0)} ${y(minY)} Z`;
+  const handleMove = (e) => {
+    const rect = containerRef.current.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.min(points.length - 1, Math.round(frac * (points.length - 1))));
+  };
+  const tickEvery = Math.max(1, Math.ceil(points.length / 6));
+  return (
+    <div ref={containerRef} style={{ position: "relative" }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradAssetLine" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
+          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
+        ))}
+        {[0, 0.5, 1].map((f, i) => {
+          const val = maxY - f * (maxY - minY);
+          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtExact(val)}</text>;
+        })}
+        <path d={areaPath} fill="url(#gradAssetLine)" />
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2" />
+        {points.map((v, i) => i % tickEvery === 0 && (
+          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{labels[i]}</text>
+        ))}
+        {hover !== null && (
+          <>
+            <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + innerH} stroke="#4C82FB" strokeWidth="1" />
+            <circle cx={x(hover)} cy={y(points[hover])} r="4" fill={color} stroke="#0B0E14" strokeWidth="2" />
+          </>
+        )}
+      </svg>
+      {hover !== null && (
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none" }}>
+          {labels[hover]}: {fmtExact(points[hover])}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComboFlowChart({ rows, height = 240 }) {
+  const W = 800, H = height;
+  const padL = 70, padR = 10, padT = 14, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const containerRef = useRef(null);
+  const [hover, setHover] = useState(null);
+  if (!rows.length) return <div style={{ color: COLORS.muted, fontSize: 12, padding: 20 }}>입출금 기록이 없습니다.</div>;
+  const flows = rows.map(r => r.flow);
+  const cums = rows.map(r => r.cumFlow);
+  const maxV = Math.max(...flows, ...cums, 0) * 1.15 || 1;
+  const minV = Math.min(...flows, ...cums, 0) * 1.15;
+  const x = (i) => rows.length === 1 ? padL + innerW / 2 : padL + (i / (rows.length - 1)) * innerW;
+  const y = (v) => padT + innerH - ((v - minV) / (maxV - minV || 1)) * innerH;
+  const barW = Math.max(2, (innerW / rows.length) * 0.5);
+  const cumLine = rows.map((r, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(r.cumFlow)}`).join(" ");
+  const cumArea = `${cumLine} L ${x(rows.length - 1)} ${y(0)} L ${x(0)} ${y(0)} Z`;
+  const handleMove = (e) => {
+    const rect = containerRef.current.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.min(rows.length - 1, Math.round(frac * (rows.length - 1))));
+  };
+  const tickEvery = Math.max(1, Math.ceil(rows.length / 6));
+  return (
+    <div ref={containerRef} style={{ position: "relative" }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradCumFlow" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={COLORS.loss} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={COLORS.loss} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
+          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
+        ))}
+        {[0, 0.5, 1].map((f, i) => {
+          const val = maxV - f * (maxV - minV);
+          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtExact(val)}</text>;
+        })}
+        <line x1={padL} x2={W - padR} y1={y(0)} y2={y(0)} stroke="#6B7280" strokeWidth="1" />
+        {rows.map((r, i) => (
+          <rect key={i} x={x(i) - barW / 2} y={r.flow >= 0 ? y(r.flow) : y(0)} width={barW}
+            height={Math.abs(y(r.flow) - y(0))} fill={r.flow >= 0 ? COLORS.gain : COLORS.loss} opacity="0.85" />
+        ))}
+        <path d={cumArea} fill="url(#gradCumFlow)" />
+        <path d={cumLine} fill="none" stroke={COLORS.loss} strokeWidth="2" />
+        {rows.map((r, i) => i % tickEvery === 0 && (
+          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{r.label}</text>
+        ))}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + innerH} stroke="#4C82FB" strokeWidth="1" />}
+      </svg>
+      {hover !== null && (
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none", lineHeight: 1.6 }}>
+          <div>{rows[hover].label}</div>
+          <div>이번 입출금: {fmtExact(rows[hover].flow)}</div>
+          <div style={{ color: COLORS.loss }}>누적: {fmtExact(rows[hover].cumFlow)}</div>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: "16px", marginTop: "8px", fontSize: "11px" }}>
+        <span><span style={{ color: COLORS.gain }}>■</span> 입금(막대)</span>
+        <span><span style={{ color: COLORS.loss }}>■</span> 출금(막대)</span>
+        <span><span style={{ color: COLORS.loss }}>—</span> 누적 입출금(선)</span>
       </div>
     </div>
   );
 }
 
-function Dashboard() {
-  const [initialBalance] = useState(17000);
-  const [monthlyReturn, setMonthlyReturn] = useState(10);
-  const [months, setMonths] = useState(12);
-  const withdrawRate = 20;
+function PieChartSVG({ segments, size = 200 }) {
+  const total = segments.reduce((s, seg) => s + seg.value, 0);
+  if (total <= 0) return <div style={{ color: COLORS.muted, fontSize: 12 }}>표시할 자산 데이터가 없습니다.</div>;
+  const r = size / 2 - 6, cx = size / 2, cy = size / 2;
+  let angleStart = -90;
+  const arcs = segments.filter(s => s.value > 0).map((seg) => {
+    const frac = seg.value / total;
+    const angleEnd = angleStart + frac * 360;
+    const largeArc = (angleEnd - angleStart) > 180 ? 1 : 0;
+    const toRad = (a) => (a * Math.PI) / 180;
+    const x1 = cx + r * Math.cos(toRad(angleStart)), y1 = cy + r * Math.sin(toRad(angleStart));
+    const x2 = cx + r * Math.cos(toRad(angleEnd)), y2 = cy + r * Math.sin(toRad(angleEnd));
+    const path = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+    const result = { ...seg, path, pct: frac * 100 };
+    angleStart = angleEnd;
+    return result;
+  });
+  return (
+    <div style={{ display: "flex", gap: "18px", alignItems: "center", flexWrap: "wrap" }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        {arcs.map((a, i) => <path key={i} d={a.path} fill={a.color} stroke={COLORS.bg} strokeWidth="1.5" />)}
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+        {arcs.map((a, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: a.color, display: "inline-block" }} />
+            <span style={{ color: COLORS.text }}>{a.label}</span>
+            <span style={{ color: COLORS.muted, fontFamily: "monospace" }}>{a.pct.toFixed(1)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
+// ---------- Asset Tracker ----------
+const ASSET_FIELDS = [
+  { key: "tether", label: "테더값(₩)", currency: "krw" },
+  { key: "kiwoom", label: "키움(₩)", currency: "krw" },
+  { key: "upbit", label: "Upbit(₩)", currency: "krw" },
+  { key: "bithumb", label: "Bithumb(₩)", currency: "krw" },
+  { key: "binance", label: "Binance($)", currency: "usd" },
+  { key: "bitget", label: "Bitget($)", currency: "usd" },
+  { key: "hyperliquid", label: "Hyperliquid($)", currency: "usd" },
+  { key: "flow", label: "입출금($)", currency: "usd" },
+];
+const EMPTY_ASSET_ROW = { date: "", tether: "", kiwoom: "", upbit: "", bithumb: "", binance: "", bitget: "", hyperliquid: "", flow: "", memo: "" };
+
+function computeTotalUSD(row) {
+  const n = (v) => Number(v) || 0;
+  const tether = n(row.tether) || 1;
+  const krwSum = n(row.kiwoom) + n(row.upbit) + n(row.bithumb);
+  const usdSum = n(row.binance) + n(row.bitget) + n(row.hyperliquid);
+  return krwSum / tether + usdSum;
+}
+
+function useUpbitTetherCandles() {
+  const [map, setMap] = useState({});
+  const [status, setStatus] = useState("idle");
+  useEffect(() => {
+    setStatus("loading");
+    fetch("https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200")
+      .then(r => r.json())
+      .then(rows => {
+        const m = {};
+        rows.forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.trade_price; });
+        setMap(m);
+        setStatus("ready");
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+  return { map, status };
+}
+
+function AssetTrackerTab({ cashBalances }) {
+  const [rows, setRows] = usePersistentState("assetRows_v1", []);
+  const [form, setForm] = useState(EMPTY_ASSET_ROW);
+  const [editIdx, setEditIdx] = useState(null);
+  const { map: tetherMap, status: tetherStatus } = useUpbitTetherCandles();
+
+  const sortedAsc = useMemo(() => rows.slice().sort((a, b) => a.date.localeCompare(b.date)), [rows]);
+  const sortedDesc = useMemo(() => rows.slice().sort((a, b) => b.date.localeCompare(a.date)), [rows]);
+
+  const totalsAsc = sortedAsc.map(computeTotalUSD);
+  const dateLabels = sortedAsc.map(r => r.date.slice(5));
+
+  let cum = 0;
+  const flowRows = sortedAsc.map(r => {
+    cum += Number(r.flow) || 0;
+    return { label: r.date.slice(5), flow: Number(r.flow) || 0, cumFlow: cum };
+  });
+
+  const totalCumFlow = flowRows.length ? flowRows[flowRows.length - 1].cumFlow : 0;
+  const firstDate = sortedAsc.length ? new Date(sortedAsc[0].date) : null;
+  const lastDate = sortedAsc.length ? new Date(sortedAsc[sortedAsc.length - 1].date) : null;
+  const periodDays = firstDate && lastDate ? Math.max(1, Math.round((lastDate - firstDate) / 86400000)) : 0;
+  const periodMonths = Math.max(periodDays / 30, 1 / 30);
+  const avgMonthlyFlow = flowRows.length ? totalCumFlow / periodMonths : 0;
+
+  const latestRow = sortedDesc[0];
+  const latestTether = latestRow ? Number(latestRow.tether) || 1 : 1;
+
+  const pieSegments = useMemo(() => {
+    if (!latestRow) return [];
+    const n = (v) => Number(v) || 0;
+    const segs = [
+      { label: "키움증권", value: n(latestRow.kiwoom) / latestTether, color: PIE_COLORS[0] },
+      { label: "Upbit", value: n(latestRow.upbit) / latestTether, color: PIE_COLORS[1] },
+      { label: "Bithumb", value: n(latestRow.bithumb) / latestTether, color: PIE_COLORS[2] },
+      { label: "Binance", value: n(latestRow.binance), color: PIE_COLORS[3] },
+      { label: "Bitget", value: n(latestRow.bitget), color: PIE_COLORS[4] },
+      { label: "Hyperliquid", value: n(latestRow.hyperliquid), color: PIE_COLORS[5] },
+    ];
+    const bankNames = { kb: "국민", shinhan: "신한", hana: "하나", k: "케이", toss: "토스", kakao: "카카오" };
+    Object.keys(bankNames).forEach((k, idx) => {
+      const krw = Number(cashBalances[k]) || 0;
+      if (krw > 0) segs.push({ label: bankNames[k] + "은행", value: krw / latestTether, color: PIE_COLORS[6 + (idx % 4)] });
+    });
+    return segs;
+  }, [latestRow, latestTether, cashBalances]);
+
+  const onDateChange = (d) => {
+    setForm(f => {
+      const auto = tetherMap[d];
+      return { ...f, date: d, tether: auto ? String(auto) : f.tether };
+    });
+  };
+  const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submitRow = () => {
+    if (!form.date) { alert("날짜를 입력하세요."); return; }
+    const next = rows.slice();
+    if (editIdx !== null) {
+      const originalIdx = rows.findIndex(r => r === sortedDesc[editIdx]);
+      next[originalIdx] = form;
+    } else {
+      next.push(form);
+    }
+    setRows(next);
+    setForm(EMPTY_ASSET_ROW);
+    setEditIdx(null);
+  };
+  const startEdit = (i) => { setForm(sortedDesc[i]); setEditIdx(i); };
+  const deleteRow = (i) => {
+    if (!confirm("이 기록을 삭제할까요?")) return;
+    const target = sortedDesc[i];
+    setRows(rows.filter(r => r !== target));
+    if (editIdx === i) { setForm(EMPTY_ASSET_ROW); setEditIdx(null); }
+  };
+
+  return (
+    <div>
+      <div className="pieRow" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: "16px", marginBottom: "16px" }}>
+        <div className="card">
+          <div className="lbl" style={{ marginBottom: "12px" }}>총자산 추이 (USD, 전체 표기)</div>
+          <DateLineChart points={totalsAsc} labels={dateLabels} color={COLORS.accent} />
+        </div>
+        <div className="card">
+          <div className="lbl" style={{ marginBottom: "12px" }}>자산 구성 비중 (최신 기록 기준)</div>
+          <PieChartSVG segments={pieSegments} />
+        </div>
+      </div>
+
+      <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "12px" }}>
+        <div className="card"><div className="lbl">총 누적 입출금</div><div className="num" style={{ fontSize: "16px", color: totalCumFlow >= 0 ? COLORS.gain : COLORS.loss, marginTop: "6px" }}>{fmtExact(totalCumFlow)}</div></div>
+        <div className="card"><div className="lbl">추적 기간</div><div className="num" style={{ fontSize: "16px", color: COLORS.text, marginTop: "6px" }}>{periodDays}일 ({(periodDays / 30).toFixed(1)}개월)</div></div>
+        <div className="card"><div className="lbl">1개월 평균 누적 입출금</div><div className="num" style={{ fontSize: "16px", color: avgMonthlyFlow >= 0 ? COLORS.gain : COLORS.loss, marginTop: "6px" }}>{fmtExact(avgMonthlyFlow)}</div></div>
+      </div>
+
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>입출금 추이 (월별 막대 + 누적선)</div>
+        <ComboFlowChart rows={flowRows} />
+      </div>
+
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>
+          기록 {editIdx !== null ? "수정" : "추가"}
+          {tetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
+          {tetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 API 호출 실패, 테더값을 직접 입력하세요</span>}
+        </div>
+        <div className="entryForm" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px" }}>
+          <div><div className="lbl">날짜</div><input type="date" value={form.date} onChange={(e) => onDateChange(e.target.value)} /></div>
+          {ASSET_FIELDS.map(f => (
+            <div key={f.key}><div className="lbl">{f.label}</div><input type="number" value={form[f.key]} onChange={(e) => updateField(f.key, e.target.value)} placeholder="0" /></div>
+          ))}
+          <div style={{ gridColumn: "span 2" }}><div className="lbl">메모</div><input type="text" value={form.memo} onChange={(e) => updateField("memo", e.target.value)} /></div>
+        </div>
+        <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
+          <button className="smallBtn" onClick={submitRow}>{editIdx !== null ? "수정 저장" : "기록 추가"}</button>
+          {editIdx !== null && <button className="smallBtn" onClick={() => { setForm(EMPTY_ASSET_ROW); setEditIdx(null); }}>취소</button>}
+          <span style={{ fontSize: "11px", color: COLORS.muted }}>예상 총자산: {fmt(computeTotalUSD(form))}</span>
+        </div>
+      </div>
+
+      <div className="card tableWrap">
+        <div className="lbl" style={{ marginBottom: "10px" }}>기록 테이블 (최신순)</div>
+        <table>
+          <thead>
+            <tr>
+              <th>날짜</th><th>테더값</th><th>키움</th><th>Upbit</th><th>Bithumb</th><th>Binance</th><th>Bitget</th><th>Hyperliquid</th><th>입출금</th><th>총자산</th><th>메모</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedDesc.map((r, i) => (
+              <tr key={i}>
+                <td>{r.date}</td>
+                <td>{r.tether ? krwFmt(r.tether) : "-"}</td>
+                <td>{r.kiwoom ? krwFmt(r.kiwoom) : "-"}</td>
+                <td>{r.upbit ? krwFmt(r.upbit) : "-"}</td>
+                <td>{r.bithumb ? krwFmt(r.bithumb) : "-"}</td>
+                <td>{r.binance ? fmt(r.binance) : "-"}</td>
+                <td>{r.bitget ? fmt(r.bitget) : "-"}</td>
+                <td>{r.hyperliquid ? fmt(r.hyperliquid) : "-"}</td>
+                <td style={{ color: Number(r.flow) < 0 ? COLORS.loss : Number(r.flow) > 0 ? COLORS.gain : COLORS.text }}>{r.flow ? fmt(r.flow) : "-"}</td>
+                <td style={{ color: COLORS.accent }}>{fmt(computeTotalUSD(r))}</td>
+                <td style={{ whiteSpace: "normal", maxWidth: "220px" }}>{r.memo}</td>
+                <td>
+                  <button className="smallBtn" onClick={() => startEdit(i)}>수정</button>{" "}
+                  <button className="smallBtn" onClick={() => deleteRow(i)}>삭제</button>
+                </td>
+              </tr>
+            ))}
+            {!sortedDesc.length && <tr><td colSpan={12} style={{ color: COLORS.muted }}>아직 기록이 없습니다.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Cash Tab ----------
+const BANKS = [
+  { key: "kb", label: "국민" }, { key: "shinhan", label: "신한" }, { key: "hana", label: "하나" },
+  { key: "k", label: "케이" }, { key: "toss", label: "토스" }, { key: "kakao", label: "카카오" },
+];
+
+function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether }) {
+  const update = (key, v) => setCashBalances(prev => ({ ...prev, [key]: v }));
+  const totalKrw = BANKS.reduce((s, b) => s + (Number(cashBalances[b.key]) || 0), 0);
+
+  const pieSegments = useMemo(() => {
+    const n = (v) => Number(v) || 0;
+    const tether = latestTether || 1;
+    const segs = [];
+    if (latestAssetRow) {
+      segs.push({ label: "키움증권", value: n(latestAssetRow.kiwoom) / tether, color: PIE_COLORS[0] });
+      segs.push({ label: "Upbit", value: n(latestAssetRow.upbit) / tether, color: PIE_COLORS[1] });
+      segs.push({ label: "Bithumb", value: n(latestAssetRow.bithumb) / tether, color: PIE_COLORS[2] });
+      segs.push({ label: "Binance", value: n(latestAssetRow.binance), color: PIE_COLORS[3] });
+      segs.push({ label: "Bitget", value: n(latestAssetRow.bitget), color: PIE_COLORS[4] });
+      segs.push({ label: "Hyperliquid", value: n(latestAssetRow.hyperliquid), color: PIE_COLORS[5] });
+    }
+    BANKS.forEach((b, idx) => {
+      const krw = n(cashBalances[b.key]);
+      if (krw > 0) segs.push({ label: b.label + "은행", value: krw / tether, color: PIE_COLORS[6 + (idx % 4)] });
+    });
+    return segs;
+  }, [cashBalances, latestAssetRow, latestTether]);
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>은행별 예금 잔고 (원화 기준)</div>
+        <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
+          {BANKS.map(b => (
+            <div key={b.key}>
+              <div className="lbl">{b.label}은행</div>
+              <input type="number" value={cashBalances[b.key] || ""} onChange={(e) => update(b.key, e.target.value)} placeholder="0" />
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: "14px", fontSize: "13px", color: COLORS.text }}>
+          현금 합계: <span className="num" style={{ color: COLORS.accent }}>{krwFmt(totalKrw)}</span>
+          {latestTether ? <span style={{ color: COLORS.muted }}> (≈ {fmt(totalKrw / latestTether)})</span> : null}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="lbl" style={{ marginBottom: "12px" }}>전체 자산 비중 (거래소 + 증권사 + 은행)</div>
+        <PieChartSVG segments={pieSegments} size={220} />
+      </div>
+    </div>
+  );
+}
+
+// ---------- Watchlist Tab ----------
+const EMPTY_WATCH_ROW = { date: "", market: "국내주식", sector: "", ticker: "", regime: "횡보", memo: "" };
+
+function WatchlistTab() {
+  const [rows, setRows] = usePersistentState("watchlistRows_v1", []);
+  const [form, setForm] = useState(EMPTY_WATCH_ROW);
+  const [editIdx, setEditIdx] = useState(null);
+  const sortedDesc = useMemo(() => rows.slice().sort((a, b) => b.date.localeCompare(a.date)), [rows]);
+
+  const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const submitRow = () => {
+    if (!form.date) { alert("날짜를 입력하세요."); return; }
+    const next = rows.slice();
+    if (editIdx !== null) {
+      const originalIdx = rows.findIndex(r => r === sortedDesc[editIdx]);
+      next[originalIdx] = form;
+    } else {
+      next.push(form);
+    }
+    setRows(next);
+    setForm(EMPTY_WATCH_ROW);
+    setEditIdx(null);
+  };
+  const startEdit = (i) => { setForm(sortedDesc[i]); setEditIdx(i); };
+  const deleteRow = (i) => {
+    if (!confirm("이 기록을 삭제할까요?")) return;
+    const target = sortedDesc[i];
+    setRows(rows.filter(r => r !== target));
+    if (editIdx === i) { setForm(EMPTY_WATCH_ROW); setEditIdx(null); }
+  };
+  const regimeColor = (r) => r === "상승" ? COLORS.gain : r === "하락" ? COLORS.loss : COLORS.muted;
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>{editIdx !== null ? "기록 수정" : "기록 추가"}</div>
+        <div className="entryForm" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "10px" }}>
+          <div><div className="lbl">날짜</div><input type="date" value={form.date} onChange={(e) => updateField("date", e.target.value)} /></div>
+          <div>
+            <div className="lbl">구분</div>
+            <select value={form.market} onChange={(e) => updateField("market", e.target.value)}>
+              <option>국내주식</option><option>해외주식</option><option>코인</option>
+            </select>
+          </div>
+          <div><div className="lbl">관심섹터</div><input type="text" value={form.sector} onChange={(e) => updateField("sector", e.target.value)} /></div>
+          <div><div className="lbl">관심종목</div><input type="text" value={form.ticker} onChange={(e) => updateField("ticker", e.target.value)} /></div>
+          <div>
+            <div className="lbl">현재 장세</div>
+            <select value={form.regime} onChange={(e) => updateField("regime", e.target.value)}>
+              <option>상승</option><option>횡보</option><option>하락</option>
+            </select>
+          </div>
+          <div><div className="lbl">전략 메모</div><input type="text" value={form.memo} onChange={(e) => updateField("memo", e.target.value)} /></div>
+        </div>
+        <div style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
+          <button className="smallBtn" onClick={submitRow}>{editIdx !== null ? "수정 저장" : "기록 추가"}</button>
+          {editIdx !== null && <button className="smallBtn" onClick={() => { setForm(EMPTY_WATCH_ROW); setEditIdx(null); }}>취소</button>}
+        </div>
+      </div>
+
+      <div className="card tableWrap">
+        <div className="lbl" style={{ marginBottom: "10px" }}>기록 테이블 (최신순)</div>
+        <table>
+          <thead><tr><th>날짜</th><th>구분</th><th>관심섹터</th><th>관심종목</th><th>현재 장세</th><th>전략 메모</th><th></th></tr></thead>
+          <tbody>
+            {sortedDesc.map((r, i) => (
+              <tr key={i}>
+                <td>{r.date}</td><td>{r.market}</td><td>{r.sector}</td><td>{r.ticker}</td>
+                <td style={{ color: regimeColor(r.regime) }}>{r.regime}</td>
+                <td style={{ whiteSpace: "normal", maxWidth: "260px" }}>{r.memo}</td>
+                <td><button className="smallBtn" onClick={() => startEdit(i)}>수정</button>{" "}<button className="smallBtn" onClick={() => deleteRow(i)}>삭제</button></td>
+              </tr>
+            ))}
+            {!sortedDesc.length && <tr><td colSpan={7} style={{ color: COLORS.muted }}>아직 기록이 없습니다.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Root Dashboard ----------
+const NAV_ITEMS = [
+  { key: "leaderboard", label: "복리계산 리더보드" },
+  { key: "quotes", label: "투자 명언" },
+  { key: "tracker", label: "자산 변동 트래커" },
+  { key: "cash", label: "현금" },
+  { key: "watchlist", label: "관심섹터/종목" },
+];
+
+function LeaderboardPanel() {
+  const [initialBalance] = useState(17000);
+  const [months, setMonths] = useState(36);
+  const withdrawRate = 20;
+  const [boundaries, setBoundaries] = useState([12, 24]);
+  const [rates, setRates] = useState([30, 20, 15]);
   const [tiers, setTiers] = useState([
-    { limit: 100000, amount: 2000 },
-    { limit: 500000, amount: 3000 },
-    { limit: 1000000, amount: 5000 },
+    { limit: 100000, amount: 2000 }, { limit: 500000, amount: 3000 }, { limit: 1000000, amount: 5000 },
   ]);
   const [aboveAmount, setAboveAmount] = useState(7000);
   const [safeRate, setSafeRate] = useState(2.5);
 
   const { rows: data, ruinMonth } = useMemo(
-    () => simulate(initialBalance, monthlyReturn, months, withdrawRate, tiers, aboveAmount),
-    [initialBalance, monthlyReturn, months, tiers, aboveAmount]
+    () => simulate(initialBalance, boundaries, rates, months, withdrawRate, tiers, aboveAmount),
+    [initialBalance, boundaries, rates, months, tiers, aboveAmount]
   );
   const last = data[data.length - 1];
-
   const totalWealthNow = last.balance + last.cumTotal;
   const recommendedMonthly = (totalWealthNow * (safeRate / 100)) / 12;
   const actualLastExpense = last.expenseThisMonth;
   const diff = actualLastExpense - recommendedMonthly;
 
   return (
-    <div style={{ background: COLORS.bg, color: COLORS.text, fontFamily: "'Inter', -apple-system, sans-serif", padding: "20px", minHeight: "100vh" }}>
-      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
-        <div style={{ marginBottom: "18px" }}>
-          <div style={{ fontSize: "20px", fontWeight: 700, letterSpacing: "-0.01em" }}>ATH 20% 인출 + 단계별 생활비 대시보드</div>
-          <div style={{ fontSize: "12px", color: COLORS.muted, marginTop: "4px" }}>
-            초기잔고 {fmt(initialBalance)} · 전고점 갱신 시 초과분의 20% 인출 · 잔고 구간별 생활비 차감
-          </div>
+    <>
+      <PhaseEditor boundaries={boundaries} setBoundaries={setBoundaries} rates={rates} setRates={setRates} months={months} setMonths={setMonths} />
+      <TierEditor tiers={tiers} setTiers={setTiers} aboveAmount={aboveAmount} setAboveAmount={setAboveAmount} />
+      {ruinMonth !== null && (
+        <div style={{ background: "rgba(239,83,80,0.1)", border: `1px solid ${COLORS.loss}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: COLORS.loss }}>
+          ⚠ {ruinMonth}개월차에 잔고가 소진됩니다 (생활비 인출이 계좌 성장을 초과).
         </div>
-
-        <div className="grid3 card" style={{ marginBottom: "16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+      )}
+      <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px", marginBottom: "16px" }}>
+        {[
+          { label: `${months}개월 후 거래소 잔고`, value: fmt(last.balance), color: COLORS.text },
+          { label: "누적 ATH 20% 인출", value: fmt(last.cumWithdrawnATH), color: COLORS.gain },
+          { label: "누적 생활비 인출", value: fmt(last.cumExpense), color: COLORS.loss },
+          { label: "총 누적 인출액", value: fmt(last.cumTotal), color: COLORS.accent },
+          { label: "총자산 배수", value: (last.totalWealth / initialBalance).toFixed(2) + "x", color: COLORS.accent },
+        ].map((c, i) => (
+          <div key={i} className="card"><div className="lbl">{c.label}</div><div className="num" style={{ fontSize: "16px", color: c.color, marginTop: "6px" }}>{c.value}</div></div>
+        ))}
+      </div>
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>거래소 잔고 추이</div>
+        <SingleAreaChart data={data} dataKey="balance" color={COLORS.accent} refValue={initialBalance} />
+      </div>
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "4px" }}>누적 출금액 추이</div>
+        <div style={{ display: "flex", gap: "16px", marginBottom: "10px", fontSize: "11px" }}>
+          <span style={{ color: COLORS.gain }}>■ ATH 20% 인출</span><span style={{ color: COLORS.loss }}>■ 생활비 인출</span>
+        </div>
+        <StackedAreaChart data={data} />
+      </div>
+      <div className="card" style={{ border: `1px solid ${COLORS.accent}` }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>적정 월 지출액 자동계산</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "20px", alignItems: "center" }}>
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-              <span className="lbl">월 수익률 (고정 가정)</span>
-              <span className="num" style={{ fontSize: "16px", color: monthlyReturn >= 0 ? COLORS.gain : COLORS.loss }}>
-                {monthlyReturn > 0 ? "+" : ""}{monthlyReturn}%
-              </span>
+              <span className="lbl">연간 인출률</span><span className="num" style={{ fontSize: "14px", color: COLORS.accent }}>{safeRate}%</span>
             </div>
-            <input type="range" min="-30" max="50" step="1" value={monthlyReturn}
-              onChange={(e) => setMonthlyReturn(Number(e.target.value))} style={{ accentColor: COLORS.accent }} />
+            <input type="range" min="0.5" max="10" step="0.1" value={safeRate} onChange={(e) => setSafeRate(Number(e.target.value))} style={{ accentColor: COLORS.accent }} />
           </div>
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-              <span className="lbl">기간</span>
-              <span className="num" style={{ fontSize: "16px", color: COLORS.accent }}>{months}개월 ({(months / 12).toFixed(1)}년)</span>
+          <div style={{ fontSize: "12px", color: COLORS.muted, lineHeight: 1.7 }}>({fmt(last.balance)} 거래소 잔고 + {fmt(last.cumTotal)} 누적 인출금) × {safeRate}% ÷ 12</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
+          <div style={{ background: COLORS.bg, borderRadius: "8px", padding: "14px" }}>
+            <div className="lbl">적정 월 지출액 ({months}개월 시점 기준)</div>
+            <div className="num" style={{ fontSize: "20px", color: COLORS.accent, marginTop: "6px" }}>{fmt(recommendedMonthly)}</div>
+          </div>
+          <div style={{ background: COLORS.bg, borderRadius: "8px", padding: "14px" }}>
+            <div className="lbl">현재 구간표상 마지막 달 생활비</div>
+            <div className="num" style={{ fontSize: "20px", color: diff > 0 ? COLORS.loss : COLORS.gain, marginTop: "6px" }}>
+              {fmt(actualLastExpense)} {diff > 0 ? `(적정보다 +${fmt(diff)} 과다)` : `(적정보다 ${fmt(Math.abs(diff))} 여유)`}
             </div>
-            <input type="range" min="3" max="120" step="1" value={months}
-              onChange={(e) => setMonths(Number(e.target.value))} style={{ accentColor: COLORS.accent }} />
           </div>
         </div>
+      </div>
+      <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "14px", lineHeight: 1.6, paddingBottom: "10px" }}>
+        매달 (1) 해당 구간의 목표 수익률 반영 → (2) ATH 갱신 시 초과분의 20% 인출 → (3) 그 시점 잔고 구간에 맞는 생활비 차감 순으로 계산됩니다. "적정 월 지출액"은 참고용 수치이며 실제 재무 조언이 아닙니다.
+      </div>
+    </>
+  );
+}
 
-        <TierEditor tiers={tiers} setTiers={setTiers} aboveAmount={aboveAmount} setAboveAmount={setAboveAmount} />
+function App() {
+  const [tab, setTab] = useState("leaderboard");
+  const [cashBalances, setCashBalances] = usePersistentState("cashBalances_v1", { kb: "", shinhan: "", hana: "", k: "", toss: "", kakao: "" });
+  const [assetRowsForCash] = usePersistentState("assetRows_v1", []);
+  const fileInputRef = useRef(null);
 
-        {ruinMonth !== null && (
-          <div style={{ background: "rgba(239,83,80,0.1)", border: `1px solid ${COLORS.loss}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: COLORS.loss }}>
-            ⚠ {ruinMonth}개월차에 잔고가 소진됩니다 (생활비 인출이 계좌 성장을 초과).
-          </div>
-        )}
+  const sortedDescForCash = assetRowsForCash.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const latestAssetRow = sortedDescForCash[0];
+  const latestTether = latestAssetRow ? Number(latestAssetRow.tether) || 1 : 1;
 
-        <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px", marginBottom: "16px" }}>
-          {[
-            { label: `${months}개월 후 거래소 잔고`, value: fmt(last.balance), color: COLORS.text },
-            { label: "누적 ATH 20% 인출", value: fmt(last.cumWithdrawnATH), color: COLORS.gain },
-            { label: "누적 생활비 인출", value: fmt(last.cumExpense), color: COLORS.loss },
-            { label: "총 누적 인출액", value: fmt(last.cumTotal), color: COLORS.accent },
-            { label: "총자산 배수", value: (last.totalWealth / initialBalance).toFixed(2) + "x", color: COLORS.accent },
-          ].map((c, i) => (
-            <div key={i} className="card">
-              <div className="lbl">{c.label}</div>
-              <div className="num" style={{ fontSize: "16px", color: c.color, marginTop: "6px" }}>{c.value}</div>
-            </div>
+  const exportData = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      assetRows: loadLS("assetRows_v1", []),
+      cashBalances: loadLS("cashBalances_v1", {}),
+      watchlistRows: loadLS("watchlistRows_v1", []),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const d = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `asset-backup-${d}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const triggerImport = () => { if (fileInputRef.current) fileInputRef.current.click(); };
+
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!confirm("현재 기기에 저장된 데이터를 백업 파일 내용으로 덮어씁니다. 계속할까요?")) return;
+        if (Array.isArray(data.assetRows)) saveLS("assetRows_v1", data.assetRows);
+        if (data.cashBalances && typeof data.cashBalances === "object") saveLS("cashBalances_v1", data.cashBalances);
+        if (Array.isArray(data.watchlistRows)) saveLS("watchlistRows_v1", data.watchlistRows);
+        alert("가져오기 완료. 페이지를 새로고침합니다.");
+        window.location.reload();
+      } catch (err) {
+        alert("파일을 읽지 못했습니다. 올바른 백업(JSON) 파일인지 확인해주세요.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <div style={{ background: COLORS.bg, color: COLORS.text, fontFamily: "'Inter', -apple-system, sans-serif", minHeight: "100vh" }}>
+      <div className="layoutRoot" style={{ display: "flex", maxWidth: "1200px", margin: "0 auto", padding: "20px", gap: "20px" }}>
+        <div className="sidebar" style={{ width: "200px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "14px", padding: "0 14px" }}>자산 관리</div>
+          {NAV_ITEMS.map(item => (
+            <button key={item.key} className={"navBtn" + (tab === item.key ? " navBtnActive" : "")} onClick={() => setTab(item.key)}>
+              {item.label}
+            </button>
           ))}
+          <div style={{ height: "1px", background: COLORS.panelBorder, margin: "10px 14px" }} />
+          <div style={{ fontSize: "11px", color: COLORS.muted, padding: "0 14px", marginBottom: "6px", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.04em" }}>데이터 관리</div>
+          <button className="navBtn" onClick={exportData}>⬇ 내보내기 (백업)</button>
+          <button className="navBtn" onClick={triggerImport}>⬆ 가져오기 (복원)</button>
+          <input ref={fileInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
         </div>
-
-        <div className="card" style={{ marginBottom: "16px" }}>
-          <div className="lbl" style={{ marginBottom: "12px" }}>거래소 잔고 추이</div>
-          <SingleAreaChart data={data} dataKey="balance" color={COLORS.accent} refValue={initialBalance} />
-        </div>
-
-        <div className="card" style={{ marginBottom: "16px" }}>
-          <div className="lbl" style={{ marginBottom: "4px" }}>누적 출금액 추이</div>
-          <div style={{ display: "flex", gap: "16px", marginBottom: "10px", fontSize: "11px" }}>
-            <span style={{ color: COLORS.gain }}>■ ATH 20% 인출</span>
-            <span style={{ color: COLORS.loss }}>■ 생활비 인출</span>
-          </div>
-          <StackedAreaChart data={data} />
-        </div>
-
-        {/* 적정 월 지출액 자동계산 */}
-        <div className="card" style={{ border: `1px solid ${COLORS.accent}` }}>
-          <div className="lbl" style={{ marginBottom: "12px" }}>적정 월 지출액 자동계산</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "20px", alignItems: "center" }}>
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                <span className="lbl">연간 인출률</span>
-                <span className="num" style={{ fontSize: "14px", color: COLORS.accent }}>{safeRate}%</span>
-              </div>
-              <input type="range" min="0.5" max="10" step="0.1" value={safeRate}
-                onChange={(e) => setSafeRate(Number(e.target.value))} style={{ accentColor: COLORS.accent }} />
-            </div>
-            <div style={{ fontSize: "12px", color: COLORS.muted, lineHeight: 1.7 }}>
-              ({fmt(last.balance)} 거래소 잔고 + {fmt(last.cumTotal)} 누적 인출금) × {safeRate}% ÷ 12
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
-            <div style={{ background: COLORS.bg, borderRadius: "8px", padding: "14px" }}>
-              <div className="lbl">적정 월 지출액 ({months}개월 시점 기준)</div>
-              <div className="num" style={{ fontSize: "20px", color: COLORS.accent, marginTop: "6px" }}>{fmt(recommendedMonthly)}</div>
-            </div>
-            <div style={{ background: COLORS.bg, borderRadius: "8px", padding: "14px" }}>
-              <div className="lbl">현재 구간표상 마지막 달 생활비</div>
-              <div className="num" style={{ fontSize: "20px", color: diff > 0 ? COLORS.loss : COLORS.gain, marginTop: "6px" }}>
-                {fmt(actualLastExpense)} {diff > 0 ? `(적정보다 +${fmt(diff)} 과다)` : `(적정보다 ${fmt(Math.abs(diff))} 여유)`}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "14px", lineHeight: 1.6, paddingBottom: "30px" }}>
-          월 수익률은 매달 동일하다고 가정한 결정론적 시나리오입니다. 매달 (1) 수익률 반영 → (2) ATH 갱신 시 초과분의 20% 인출 → (3) 그 시점 잔고 구간에 맞는 생활비 차감 순으로 계산됩니다. "적정 월 지출액"은 (거래소 잔고+누적 인출금) 합계에 연간 인출률을 곱해 12개월로 나눈 참고용 수치이며, 실제 재무 조언이 아닙니다.
+        <div style={{ flex: 1, minWidth: 0, paddingBottom: "40px" }}>
+          {tab === "leaderboard" && <LeaderboardPanel />}
+          {tab === "quotes" && <QuotesTab />}
+          {tab === "tracker" && <AssetTrackerTab cashBalances={cashBalances} />}
+          {tab === "cash" && <CashTab cashBalances={cashBalances} setCashBalances={setCashBalances} latestAssetRow={latestAssetRow} latestTether={latestTether} />}
+          {tab === "watchlist" && <WatchlistTab />}
         </div>
       </div>
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<Dashboard />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
