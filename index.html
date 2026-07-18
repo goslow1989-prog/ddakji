@@ -87,10 +87,26 @@ const fmtCompact = (n) => {
 
 // Some exchange public APIs don't send CORS headers for arbitrary origins,
 // so requests from a static site (e.g. GitHub Pages) get blocked by the browser.
-// Route through a public CORS proxy as a fallback.
-function corsFetch(url) {
-  const proxied = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
-  return fetch(url).catch(() => fetch(proxied));
+// Try a direct call first, then fall back through several public CORS proxies
+// in order until one actually succeeds (proxy services go down/rate-limit often).
+async function corsFetch(url) {
+  const attempts = [
+    url,
+    "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
+    "https://corsproxy.io/?url=" + encodeURIComponent(url),
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+  ];
+  let lastErr = null;
+  for (const attemptUrl of attempts) {
+    try {
+      const res = await fetch(attemptUrl);
+      if (res && res.ok) return res;
+      lastErr = new Error("HTTP " + (res ? res.status : "?"));
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("all proxies failed");
 }
 
 function getExpenseForBalance(balance, tiers, aboveAmount) {
