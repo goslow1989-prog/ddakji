@@ -156,20 +156,30 @@ function simulate(initialBalance, boundaries, rates, months, withdrawRatePct, ti
 }
 
 // ---- Pure-SVG chart components (leaderboard, month-index based) ----
-function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
+function SingleAreaChart({ data, dataKey, color, height = 220, refValue, overlay }) {
   const W = 800, H = height;
   const padL = 55, padR = 10, padT = 10, padB = 24;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const containerRef = useRef(null);
   const [hover, setHover] = useState(null);
   const values = data.map(d => d[dataKey]);
-  const maxY = Math.max(...values, refValue || 0) * 1.1 || 1;
-  const minY = Math.min(0, Math.min(...values));
+  const overlayVals = overlay ? overlay.points.filter(v => v != null) : [];
+  const maxY = Math.max(...values, ...overlayVals, refValue || 0) * 1.1 || 1;
+  const minY = Math.min(0, Math.min(...values, ...(overlayVals.length ? overlayVals : [0])));
   const x = (i) => padL + (i / (data.length - 1)) * innerW;
   const y = (v) => padT + innerH - ((v - minY) / (maxY - minY)) * innerH;
   const linePath = data.map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d[dataKey])}`).join(" ");
   const areaPath = `${linePath} L ${x(data.length - 1)} ${y(minY)} L ${x(0)} ${y(minY)} Z`;
   const gid = "grad-" + dataKey;
+  let overlayPath = "";
+  if (overlay) {
+    let started = false;
+    overlay.points.forEach((v, i) => {
+      if (v == null) { started = false; return; }
+      overlayPath += `${started ? "L" : "M"} ${x(i)} ${y(v)} `;
+      started = true;
+    });
+  }
   const handleMove = (e) => {
     const rect = containerRef.current.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
@@ -195,6 +205,10 @@ function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
         {refValue != null && <line x1={padL} x2={W - padR} y1={y(refValue)} y2={y(refValue)} stroke="#6B7280" strokeDasharray="4 3" />}
         <path d={areaPath} fill={`url(#${gid})`} />
         <path d={linePath} fill="none" stroke={color} strokeWidth="2" />
+        {overlay && <path d={overlayPath} fill="none" stroke={overlay.color} strokeWidth="2.5" strokeDasharray="0" />}
+        {overlay && overlay.points.map((v, i) => v != null && (
+          <circle key={"ov" + i} cx={x(i)} cy={y(v)} r="2.5" fill={overlay.color} />
+        ))}
         {data.map((d, i) => i % tickEvery === 0 && (
           <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{d.month}M</text>
         ))}
@@ -205,9 +219,16 @@ function SingleAreaChart({ data, dataKey, color, height = 220, refValue }) {
           </>
         )}
       </svg>
+      {overlay && (
+        <div style={{ display: "flex", gap: "16px", marginTop: "8px", fontSize: "11px" }}>
+          <span><span style={{ color }}>■</span> {dataKey === "balance" ? "시뮬레이션 목표" : dataKey}</span>
+          <span><span style={{ color: overlay.color }}>■</span> {overlay.label}</span>
+        </div>
+      )}
       {hover !== null && (
         <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none" }}>
           {data[hover].month}개월차: {fmt(data[hover][dataKey])} (수익률 {data[hover].rate}%)
+          {overlay && overlay.points[hover] != null && <div style={{ color: overlay.color }}>{overlay.label}: {fmt(overlay.points[hover])}</div>}
         </div>
       )}
     </div>
@@ -1080,10 +1101,26 @@ const NAV_ITEMS = [
 
 function LeaderboardPanel({
   initialBalance, months, setMonths, boundaries, setBoundaries, rates, setRates,
-  tiers, setTiers, aboveAmount, setAboveAmount, safeRate, setSafeRate, simResult,
+  tiers, setTiers, aboveAmount, setAboveAmount, safeRate, setSafeRate, simResult, assetRows,
 }) {
   const { rows: data, ruinMonth } = simResult;
   const last = data[data.length - 1];
+
+  // Overlay: actual tracker balances mapped onto the same month-index axis, with month 0 = May 1st
+  const actualOverlay = useMemo(() => {
+    if (!assetRows || !assetRows.length) return null;
+    const sortedAsc = assetRows.slice().sort((a, b) => a.date.localeCompare(b.date));
+    const anchorYear = Number(sortedAsc[0].date.slice(0, 4)) || new Date().getFullYear();
+    const anchor = new Date(`${anchorYear}-05-01`);
+    const points = new Array(months + 1).fill(null);
+    sortedAsc.forEach(r => {
+      const d = new Date(r.date);
+      const idx = Math.round((d - anchor) / (30 * 86400000));
+      if (idx >= 0 && idx <= months) points[idx] = computeTotalUSD(r);
+    });
+    if (points.every(v => v == null)) return null;
+    return { label: "실제 잔고 (트래커)", color: COLORS.gain, points };
+  }, [assetRows, months]);
   const totalWealthNow = last.balance + last.cumTotal;
   const recommendedMonthly = (totalWealthNow * (safeRate / 100)) / 12;
   const actualLastExpense = last.expenseThisMonth;
@@ -1111,7 +1148,7 @@ function LeaderboardPanel({
       </div>
       <div className="card" style={{ marginBottom: "16px" }}>
         <div className="lbl" style={{ marginBottom: "12px" }}>거래소 잔고 추이</div>
-        <SingleAreaChart data={data} dataKey="balance" color={COLORS.accent} refValue={initialBalance} />
+        <SingleAreaChart data={data} dataKey="balance" color={COLORS.accent} refValue={initialBalance} overlay={actualOverlay} />
       </div>
       <div className="card" style={{ marginBottom: "16px" }}>
         <div className="lbl" style={{ marginBottom: "4px" }}>누적 출금액 추이</div>
@@ -1448,6 +1485,7 @@ function App() {
               boundaries={lbBoundaries} setBoundaries={setLbBoundaries} rates={lbRates} setRates={setLbRates}
               tiers={lbTiers} setTiers={setLbTiers} aboveAmount={lbAboveAmount} setAboveAmount={setLbAboveAmount}
               safeRate={lbSafeRate} setSafeRate={setLbSafeRate} simResult={lbSimResult}
+              assetRows={assetRowsForCash}
             />
           )}
           {tab === "analysis" && (
