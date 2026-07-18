@@ -85,6 +85,14 @@ const fmtCompact = (n) => {
   return "$" + (n / 1000).toFixed(0) + "k";
 };
 
+// Some exchange public APIs don't send CORS headers for arbitrary origins,
+// so requests from a static site (e.g. GitHub Pages) get blocked by the browser.
+// Route through a public CORS proxy as a fallback.
+function corsFetch(url) {
+  const proxied = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
+  return fetch(url).catch(() => fetch(proxied));
+}
+
 function getExpenseForBalance(balance, tiers, aboveAmount) {
   for (const t of tiers) if (balance < t.limit) return t.amount;
   return aboveAmount;
@@ -633,7 +641,7 @@ function useUpbitTetherCandles() {
     setStatus("loading");
     const fetchPage = (to) => {
       const url = "https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200" + (to ? "&to=" + encodeURIComponent(to) : "");
-      return fetch(url).then(r => r.json());
+      return corsFetch(url).then(r => r.json());
     };
     // Page 1: most recent 200 daily candles
     fetchPage(null)
@@ -661,7 +669,7 @@ function useUpbitLiveTether() {
   const [status, setStatus] = useState("idle");
   useEffect(() => {
     setStatus("loading");
-    fetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT")
+    corsFetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT")
       .then(r => r.json())
       .then(rows => {
         if (rows && rows[0] && rows[0].trade_price) {
@@ -681,7 +689,7 @@ function useBinanceBtcCandles() {
   const [status, setStatus] = useState("idle");
   useEffect(() => {
     setStatus("loading");
-    fetch("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1d&limit=1000")
+    corsFetch("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1d&limit=1000")
       .then(r => r.json())
       .then(rows => {
         const m = {};
