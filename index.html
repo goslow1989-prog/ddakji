@@ -606,7 +606,8 @@ function PercentLineChart({ labels, series, height = 220 }) {
 
 // ---------- Asset Tracker ----------
 const ASSET_FIELDS = [
-  { key: "tether", label: "테더값(₩)", currency: "krw" },
+  { key: "btc", label: "BTC($)", currency: "usd" },
+  { key: "tether", label: "테더(₩)", currency: "krw" },
   { key: "kiwoom", label: "키움(₩)", currency: "krw" },
   { key: "upbit", label: "Upbit(₩)", currency: "krw" },
   { key: "bithumb", label: "Bithumb(₩)", currency: "krw" },
@@ -615,7 +616,7 @@ const ASSET_FIELDS = [
   { key: "hyperliquid", label: "Hyperliquid($)", currency: "usd" },
   { key: "flow", label: "입출금($)", currency: "usd" },
 ];
-const EMPTY_ASSET_ROW = { date: "", tether: "", kiwoom: "", upbit: "", bithumb: "", binance: "", bitget: "", hyperliquid: "", flow: "", memo: "" };
+const EMPTY_ASSET_ROW = { date: "", btc: "", tether: "", kiwoom: "", upbit: "", bithumb: "", binance: "", bitget: "", hyperliquid: "", flow: "", memo: "" };
 
 function computeTotalUSD(row) {
   const n = (v) => Number(v) || 0;
@@ -630,13 +631,25 @@ function useUpbitTetherCandles() {
   const [status, setStatus] = useState("idle");
   useEffect(() => {
     setStatus("loading");
-    fetch("https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200")
-      .then(r => r.json())
-      .then(rows => {
+    const fetchPage = (to) => {
+      const url = "https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200" + (to ? "&to=" + encodeURIComponent(to) : "");
+      return fetch(url).then(r => r.json());
+    };
+    // Page 1: most recent 200 daily candles
+    fetchPage(null)
+      .then(page1 => {
         const m = {};
-        rows.forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.trade_price; });
-        setMap(m);
-        setStatus("ready");
+        (page1 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
+        const oldest = page1 && page1.length ? page1[page1.length - 1].candle_date_time_utc : null;
+        if (!oldest) { setMap(m); setStatus("ready"); return; }
+        // Page 2: another 200 candles further back, to cover earlier dates too
+        fetchPage(oldest)
+          .then(page2 => {
+            (page2 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
+            setMap(m);
+            setStatus("ready");
+          })
+          .catch(() => { setMap(m); setStatus("ready"); });
       })
       .catch(() => setStatus("error"));
   }, []);
@@ -663,12 +676,35 @@ function useUpbitLiveTether() {
   return { rate, status };
 }
 
+function useBinanceBtcCandles() {
+  const [map, setMap] = useState({});
+  const [status, setStatus] = useState("idle");
+  useEffect(() => {
+    setStatus("loading");
+    fetch("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1d&limit=1000")
+      .then(r => r.json())
+      .then(rows => {
+        const m = {};
+        (rows || []).forEach(k => {
+          const d = new Date(k[0]);
+          const dateStr = d.toISOString().slice(0, 10);
+          m[dateStr] = Number(k[1]); // open price
+        });
+        setMap(m);
+        setStatus("ready");
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+  return { map, status };
+}
+
 function AssetTrackerTab({ cashBalances }) {
   const [rows, setRows] = usePersistentState("assetRows_v1", []);
   const [form, setForm] = useState(EMPTY_ASSET_ROW);
   const [editIdx, setEditIdx] = useState(null);
   const [initialSeed, setInitialSeed] = usePersistentState("trackerInitialSeed_v1", 17000);
   const { map: tetherMap, status: tetherStatus } = useUpbitTetherCandles();
+  const { map: btcMap, status: btcStatus } = useBinanceBtcCandles();
 
   const sortedAsc = useMemo(() => rows.slice().sort((a, b) => a.date.localeCompare(b.date)), [rows]);
   const sortedDesc = useMemo(() => rows.slice().sort((a, b) => b.date.localeCompare(a.date)), [rows]);
@@ -727,8 +763,13 @@ function AssetTrackerTab({ cashBalances }) {
 
   const onDateChange = (d) => {
     setForm(f => {
-      const auto = tetherMap[d];
-      return { ...f, date: d, tether: auto ? String(auto) : f.tether };
+      const autoTether = tetherMap[d];
+      const autoBtc = btcMap[d];
+      return {
+        ...f, date: d,
+        tether: autoTether ? String(autoTether) : f.tether,
+        btc: autoBtc ? String(Math.round(autoBtc)) : f.btc,
+      };
     });
   };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -752,6 +793,26 @@ function AssetTrackerTab({ cashBalances }) {
     const target = sortedDesc[i];
     setRows(rows.filter(r => r !== target));
     if (editIdx === i) { setForm(EMPTY_ASSET_ROW); setEditIdx(null); }
+  };
+
+  const [bulkFillMsg, setBulkFillMsg] = useState("");
+  const bulkFillTether = () => {
+    if (tetherStatus !== "ready" || btcStatus !== "ready") { setBulkFillMsg("시세를 아직 불러오는 중입니다. 잠시 후 다시 시도하세요."); return; }
+    let tetherFilled = 0, btcFilled = 0, missing = 0;
+    const next = rows.map(r => {
+      let nr = r;
+      if (!nr.tether) {
+        const price = tetherMap[nr.date];
+        if (price) { tetherFilled++; nr = { ...nr, tether: String(price) }; } else { missing++; }
+      }
+      if (!nr.btc) {
+        const price = btcMap[nr.date];
+        if (price) { btcFilled++; nr = { ...nr, btc: String(Math.round(price)) }; }
+      }
+      return nr;
+    });
+    setRows(next);
+    setBulkFillMsg(`테더 ${tetherFilled}건, BTC ${btcFilled}건 채움${missing ? ` (${missing}건은 시세를 찾지 못함)` : ""}.`);
   };
 
   return (
@@ -799,10 +860,16 @@ function AssetTrackerTab({ cashBalances }) {
       </div>
 
       <div className="card" style={{ marginBottom: "16px" }}>
-        <div className="lbl" style={{ marginBottom: "12px" }}>
-          기록 {editIdx !== null ? "수정" : "추가"}
-          {tetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
-          {tetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 API 호출 실패, 테더값을 직접 입력하세요</span>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
+          <div className="lbl" style={{ marginBottom: 0 }}>
+            기록 {editIdx !== null ? "수정" : "추가"}
+            {tetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
+            {tetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 API 호출 실패, 테더/BTC를 직접 입력하세요</span>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {bulkFillMsg && <span style={{ fontSize: "11px", color: COLORS.muted }}>{bulkFillMsg}</span>}
+            <button className="smallBtn" onClick={bulkFillTether}>전체 기록 테더/BTC 일괄 채우기</button>
+          </div>
         </div>
         <div className="entryForm" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px" }}>
           <div><div className="lbl">날짜</div><input type="date" value={form.date} onChange={(e) => onDateChange(e.target.value)} /></div>
@@ -823,13 +890,14 @@ function AssetTrackerTab({ cashBalances }) {
         <table>
           <thead>
             <tr>
-              <th>날짜</th><th>테더값</th><th>키움</th><th>Upbit</th><th>Bithumb</th><th>Binance</th><th>Bitget</th><th>Hyperliquid</th><th>입출금</th><th>총자산</th><th>메모</th><th></th>
+              <th>날짜</th><th>BTC</th><th>테더</th><th>키움</th><th>Upbit</th><th>Bithumb</th><th>Binance</th><th>Bitget</th><th>Hyperliquid</th><th>입출금</th><th>총자산</th><th>메모</th><th></th>
             </tr>
           </thead>
           <tbody>
             {sortedDesc.map((r, i) => (
               <tr key={i}>
                 <td>{r.date}</td>
+                <td>{r.btc ? fmt(r.btc) : "-"}</td>
                 <td>{r.tether ? krwFmt(r.tether) : "-"}</td>
                 <td>{r.kiwoom ? krwFmt(r.kiwoom) : "-"}</td>
                 <td>{r.upbit ? krwFmt(r.upbit) : "-"}</td>
@@ -846,7 +914,7 @@ function AssetTrackerTab({ cashBalances }) {
                 </td>
               </tr>
             ))}
-            {!sortedDesc.length && <tr><td colSpan={12} style={{ color: COLORS.muted }}>아직 기록이 없습니다.</td></tr>}
+            {!sortedDesc.length && <tr><td colSpan={13} style={{ color: COLORS.muted }}>아직 기록이 없습니다.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -890,7 +958,7 @@ function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether, 
         <div className="lbl" style={{ marginBottom: "4px" }}>
           은행별 예금 잔고 (원화 기준)
           {liveTetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
-          {liveTetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 시세 실패, 트래커의 마지막 테더값 사용</span>}
+          {liveTetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 시세 실패, 트래커의 마지막 테더 사용</span>}
         </div>
         <div style={{ fontSize: "11px", color: COLORS.muted, marginBottom: "12px" }}>
           현재 적용 환율(테더 기준): ₩{effectiveTether.toLocaleString("en-US")} / USDT{liveTetherRate ? " (업비트 실시간)" : latestTether > 1 ? " (트래커 마지막 기록)" : " (기본값)"}
