@@ -395,9 +395,9 @@ function QuotesTab() {
 }
 
 // ---- New chart primitives for Asset Tracker (date-indexed, exact numbers) ----
-function DateLineChart({ points, labels, color, height = 220, refValue }) {
+function DateLineChart({ points, labels, color, height = 260, refValue }) {
   const W = 800, H = height;
-  const padL = 70, padR = 10, padT = 14, padB = 26;
+  const padL = 90, padR = 14, padT = 18, padB = 34;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const containerRef = useRef(null);
   const [hover, setHover] = useState(null);
@@ -426,14 +426,14 @@ function DateLineChart({ points, labels, color, height = 220, refValue }) {
         {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
           <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
         ))}
-        {[0, 0.5, 1].map((f, i) => {
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
           const val = maxY - f * (maxY - minY);
-          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{fmtExact(val)}</text>;
+          return <text key={i} x={padL - 12} y={padT + innerH * f + 5} textAnchor="end" fontSize="15" fontWeight="600" fill="#9CA3AF" fontFamily="monospace">{fmtExact(val)}</text>;
         })}
         <path d={areaPath} fill="url(#gradAssetLine)" />
-        <path d={linePath} fill="none" stroke={color} strokeWidth="2" />
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" />
         {points.map((v, i) => i % tickEvery === 0 && (
-          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="#6B7280" fontFamily="monospace">{labels[i]}</text>
+          <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="14" fontWeight="600" fill="#9CA3AF" fontFamily="monospace">{labels[i]}</text>
         ))}
         {hover !== null && (
           <>
@@ -643,6 +643,26 @@ function useUpbitTetherCandles() {
   return { map, status };
 }
 
+function useUpbitLiveTether() {
+  const [rate, setRate] = useState(null);
+  const [status, setStatus] = useState("idle");
+  useEffect(() => {
+    setStatus("loading");
+    fetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT")
+      .then(r => r.json())
+      .then(rows => {
+        if (rows && rows[0] && rows[0].trade_price) {
+          setRate(rows[0].trade_price);
+          setStatus("ready");
+        } else {
+          setStatus("error");
+        }
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+  return { rate, status };
+}
+
 function AssetTrackerTab({ cashBalances }) {
   const [rows, setRows] = usePersistentState("assetRows_v1", []);
   const [form, setForm] = useState(EMPTY_ASSET_ROW);
@@ -840,13 +860,14 @@ const BANKS = [
   { key: "k", label: "케이" }, { key: "toss", label: "토스" }, { key: "kakao", label: "카카오" },
 ];
 
-function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether }) {
+function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether, liveTetherRate, liveTetherStatus }) {
   const update = (key, v) => setCashBalances(prev => ({ ...prev, [key]: v }));
   const totalKrw = BANKS.reduce((s, b) => s + (Number(cashBalances[b.key]) || 0), 0);
+  const effectiveTether = liveTetherRate || latestTether || 1;
 
   const pieSegments = useMemo(() => {
     const n = (v) => Number(v) || 0;
-    const tether = latestTether || 1;
+    const tether = effectiveTether;
     const segs = [];
     if (latestAssetRow) {
       segs.push({ label: "키움증권", value: n(latestAssetRow.kiwoom) / tether, color: PIE_COLORS[0] });
@@ -861,12 +882,19 @@ function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether }
       if (krw > 0) segs.push({ label: b.label + "은행", value: krw / tether, color: PIE_COLORS[6 + (idx % 4)] });
     });
     return segs;
-  }, [cashBalances, latestAssetRow, latestTether]);
+  }, [cashBalances, latestAssetRow, effectiveTether]);
 
   return (
     <div>
       <div className="card" style={{ marginBottom: "16px" }}>
-        <div className="lbl" style={{ marginBottom: "12px" }}>은행별 예금 잔고 (원화 기준)</div>
+        <div className="lbl" style={{ marginBottom: "4px" }}>
+          은행별 예금 잔고 (원화 기준)
+          {liveTetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
+          {liveTetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 시세 실패, 트래커의 마지막 테더값 사용</span>}
+        </div>
+        <div style={{ fontSize: "11px", color: COLORS.muted, marginBottom: "12px" }}>
+          현재 적용 환율(테더 기준): ₩{effectiveTether.toLocaleString("en-US")} / USDT{liveTetherRate ? " (업비트 실시간)" : latestTether > 1 ? " (트래커 마지막 기록)" : " (기본값)"}
+        </div>
         <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
           {BANKS.map(b => (
             <div key={b.key}>
@@ -877,7 +905,7 @@ function CashTab({ cashBalances, setCashBalances, latestAssetRow, latestTether }
         </div>
         <div style={{ marginTop: "14px", fontSize: "13px", color: COLORS.text }}>
           현금 합계: <span className="num" style={{ color: COLORS.accent }}>{krwFmt(totalKrw)}</span>
-          {latestTether ? <span style={{ color: COLORS.muted }}> (≈ {fmt(totalKrw / latestTether)})</span> : null}
+          <span style={{ color: COLORS.muted }}> (≈ {fmt(totalKrw / effectiveTether)})</span>
         </div>
       </div>
 
@@ -1072,6 +1100,7 @@ function App() {
   const sortedDescForCash = assetRowsForCash.slice().sort((a, b) => b.date.localeCompare(a.date));
   const latestAssetRow = sortedDescForCash[0];
   const latestTether = latestAssetRow ? Number(latestAssetRow.tether) || 1 : 1;
+  const { rate: liveTetherRate, status: liveTetherStatus } = useUpbitLiveTether();
 
   const exportData = () => {
     const payload = {
@@ -1135,7 +1164,7 @@ function App() {
           {tab === "leaderboard" && <LeaderboardPanel />}
           {tab === "quotes" && <QuotesTab />}
           {tab === "tracker" && <AssetTrackerTab cashBalances={cashBalances} />}
-          {tab === "cash" && <CashTab cashBalances={cashBalances} setCashBalances={setCashBalances} latestAssetRow={latestAssetRow} latestTether={latestTether} />}
+          {tab === "cash" && <CashTab cashBalances={cashBalances} setCashBalances={setCashBalances} latestAssetRow={latestAssetRow} latestTether={latestTether} liveTetherRate={liveTetherRate} liveTetherStatus={liveTetherStatus} />}
           {tab === "watchlist" && <WatchlistTab />}
         </div>
       </div>
