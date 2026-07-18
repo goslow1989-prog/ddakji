@@ -576,7 +576,7 @@ function PieChartSVG({ segments, size = 200 }) {
   );
 }
 
-function PercentLineChart({ labels, series, height = 220 }) {
+function PercentLineChart({ labels, series, height = 220, refLine }) {
   const W = 800, H = height;
   const padL = 55, padR = 10, padT = 14, padB = 26;
   const innerW = W - padL - padR, innerH = H - padT - padB;
@@ -606,6 +606,12 @@ function PercentLineChart({ labels, series, height = 220 }) {
           return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{val.toFixed(1)}%</text>;
         })}
         <line x1={padL} x2={W - padR} y1={y(0)} y2={y(0)} stroke="#6B7280" strokeWidth="1" />
+        {refLine != null && (
+          <>
+            <line x1={padL} x2={W - padR} y1={y(refLine)} y2={y(refLine)} stroke={COLORS.loss} strokeDasharray="5 4" strokeWidth="1.5" />
+            <text x={W - padR} y={y(refLine) - 5} textAnchor="end" fontSize="10" fill={COLORS.loss} fontFamily="monospace">기준선 {refLine}%</text>
+          </>
+        )}
         {series.map((s, si) => {
           const path = s.points.map((v, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(v)}`).join(" ");
           return <path key={si} d={path} fill="none" stroke={s.color} strokeWidth="2" />;
@@ -819,26 +825,6 @@ function AssetTrackerTab({ cashBalances }) {
     if (editIdx === i) { setForm(EMPTY_ASSET_ROW); setEditIdx(null); }
   };
 
-  const [bulkFillMsg, setBulkFillMsg] = useState("");
-  const bulkFillTether = () => {
-    if (tetherStatus !== "ready" || btcStatus !== "ready") { setBulkFillMsg("시세를 아직 불러오는 중입니다. 잠시 후 다시 시도하세요."); return; }
-    let tetherFilled = 0, btcFilled = 0, missing = 0;
-    const next = rows.map(r => {
-      let nr = r;
-      if (!nr.tether) {
-        const price = tetherMap[nr.date];
-        if (price) { tetherFilled++; nr = { ...nr, tether: String(price) }; } else { missing++; }
-      }
-      if (!nr.btc) {
-        const price = btcMap[nr.date];
-        if (price) { btcFilled++; nr = { ...nr, btc: String(Math.round(price)) }; }
-      }
-      return nr;
-    });
-    setRows(next);
-    setBulkFillMsg(`테더 ${tetherFilled}건, BTC ${btcFilled}건 채움${missing ? ` (${missing}건은 시세를 찾지 못함)` : ""}.`);
-  };
-
   return (
     <div>
       <div className="pieRow" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: "16px", marginBottom: "16px" }}>
@@ -884,16 +870,8 @@ function AssetTrackerTab({ cashBalances }) {
       </div>
 
       <div className="card" style={{ marginBottom: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
-          <div className="lbl" style={{ marginBottom: 0 }}>
-            기록 {editIdx !== null ? "수정" : "추가"}
-            {tetherStatus === "loading" && <span style={{ color: COLORS.muted, marginLeft: 8, textTransform: "none" }}>· 업비트 테더 시세 불러오는 중…</span>}
-            {tetherStatus === "error" && <span style={{ color: COLORS.loss, marginLeft: 8, textTransform: "none" }}>· 업비트 API 호출 실패, 테더/BTC를 직접 입력하세요</span>}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            {bulkFillMsg && <span style={{ fontSize: "11px", color: COLORS.muted }}>{bulkFillMsg}</span>}
-            <button className="smallBtn" onClick={bulkFillTether}>전체 기록 테더/BTC 일괄 채우기</button>
-          </div>
+        <div className="lbl" style={{ marginBottom: "12px" }}>
+          기록 {editIdx !== null ? "수정" : "추가"}
         </div>
         <div className="entryForm" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px" }}>
           <div><div className="lbl">날짜</div><input type="date" value={form.date} onChange={(e) => onDateChange(e.target.value)} /></div>
@@ -1093,28 +1071,18 @@ function WatchlistTab() {
 // ---------- Root Dashboard ----------
 const NAV_ITEMS = [
   { key: "leaderboard", label: "복리계산 리더보드" },
+  { key: "analysis", label: "성과 분석" },
   { key: "quotes", label: "투자 명언" },
   { key: "tracker", label: "자산 변동 트래커" },
   { key: "cash", label: "현금" },
   { key: "watchlist", label: "관심섹터/종목" },
 ];
 
-function LeaderboardPanel() {
-  const [initialBalance] = useState(17000);
-  const [months, setMonths] = useState(36);
-  const withdrawRate = 20;
-  const [boundaries, setBoundaries] = useState([12, 24]);
-  const [rates, setRates] = useState([30, 20, 15]);
-  const [tiers, setTiers] = useState([
-    { limit: 100000, amount: 2000 }, { limit: 500000, amount: 3000 }, { limit: 1000000, amount: 5000 },
-  ]);
-  const [aboveAmount, setAboveAmount] = useState(7000);
-  const [safeRate, setSafeRate] = useState(2.5);
-
-  const { rows: data, ruinMonth } = useMemo(
-    () => simulate(initialBalance, boundaries, rates, months, withdrawRate, tiers, aboveAmount),
-    [initialBalance, boundaries, rates, months, tiers, aboveAmount]
-  );
+function LeaderboardPanel({
+  initialBalance, months, setMonths, boundaries, setBoundaries, rates, setRates,
+  tiers, setTiers, aboveAmount, setAboveAmount, safeRate, setSafeRate, simResult,
+}) {
+  const { rows: data, ruinMonth } = simResult;
   const last = data[data.length - 1];
   const totalWealthNow = last.balance + last.cumTotal;
   const recommendedMonthly = (totalWealthNow * (safeRate / 100)) / 12;
@@ -1183,6 +1151,211 @@ function LeaderboardPanel() {
   );
 }
 
+// ---------- Analysis Tab ----------
+function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lbSimResult, lbInitialBalance, lbMonths }) {
+  const sortedAsc = useMemo(() => assetRows.slice().sort((a, b) => a.date.localeCompare(b.date)), [assetRows]);
+  const totals = sortedAsc.map(computeTotalUSD);
+  const dateLabels = sortedAsc.map(r => r.date.slice(5));
+
+  if (!sortedAsc.length) {
+    return (
+      <div className="card" style={{ color: COLORS.muted, fontSize: 13 }}>
+        분석할 데이터가 없습니다. 먼저 자산 변동 트래커 탭에서 기록을 추가해주세요.
+      </div>
+    );
+  }
+
+  // A. MDD tracking (real data), danger threshold = -50% from ATH
+  let ath = totals[0];
+  const drawdownPct = totals.map(v => {
+    if (v > ath) ath = v;
+    return ath > 0 ? ((v - ath) / ath) * 100 : 0; // negative or 0
+  });
+  const currentDD = drawdownPct[drawdownPct.length - 1];
+  const maxDD = Math.min(...drawdownPct);
+  const breached = currentDD <= -50;
+
+  // B. Target vs actual overlay
+  const firstDate = new Date(sortedAsc[0].date);
+  const lastDate = new Date(sortedAsc[sortedAsc.length - 1].date);
+  const elapsedMonths = Math.max(0, Math.floor((lastDate - firstDate) / (30 * 86400000)));
+  const overlayMonths = Math.min(elapsedMonths, lbMonths);
+  const overlayLabels = [];
+  const actualPctSeries = [];
+  const targetPctSeries = [];
+  const initialActual = totals[0] || 1;
+  for (let m = 0; m <= overlayMonths; m++) {
+    const cutoff = new Date(firstDate.getTime() + m * 30 * 86400000);
+    let bucketVal = totals[0];
+    for (let i = 0; i < sortedAsc.length; i++) {
+      if (new Date(sortedAsc[i].date) <= cutoff) bucketVal = totals[i];
+      else break;
+    }
+    actualPctSeries.push(((bucketVal - initialActual) / initialActual) * 100);
+    const lbRow = lbSimResult.rows[m];
+    targetPctSeries.push(lbRow ? ((lbRow.totalWealth - lbInitialBalance) / lbInitialBalance) * 100 : null);
+    overlayLabels.push(`${m}M`);
+  }
+  const hasTargetData = targetPctSeries.some(v => v !== null);
+
+  // C. Win-rate / payoff stats from actual flow-adjusted period returns
+  const periodReturns = [];
+  for (let i = 1; i < sortedAsc.length; i++) {
+    const prev = totals[i - 1];
+    if (prev <= 0) continue;
+    const flow = Number(sortedAsc[i].flow) || 0;
+    const r = (totals[i] - flow - prev) / prev;
+    periodReturns.push(r);
+  }
+  const wins = periodReturns.filter(r => r > 0);
+  const losses = periodReturns.filter(r => r < 0);
+  const winRate = periodReturns.length ? (wins.length / periodReturns.length) * 100 : 0;
+  const avgWin = wins.length ? (wins.reduce((a, b) => a + b, 0) / wins.length) * 100 : 0;
+  const avgLoss = losses.length ? (Math.abs(losses.reduce((a, b) => a + b, 0)) / losses.length) * 100 : 0;
+  const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : null;
+
+  // D. Concentration warning across exchanges + banks
+  const latest = sortedAsc[sortedAsc.length - 1];
+  const tether = liveTetherRate || latestTether || Number(latest.tether) || 1;
+  const n = (v) => Number(v) || 0;
+  const concentrationSegs = [
+    { label: "키움증권", value: n(latest.kiwoom) / tether },
+    { label: "Upbit", value: n(latest.upbit) / tether },
+    { label: "Bithumb", value: n(latest.bithumb) / tether },
+    { label: "Binance", value: n(latest.binance) },
+    { label: "Bitget", value: n(latest.bitget) },
+    { label: "Hyperliquid", value: n(latest.hyperliquid) },
+  ];
+  const bankNames = { kb: "국민", shinhan: "신한", hana: "하나", k: "케이", toss: "토스", kakao: "카카오" };
+  Object.keys(bankNames).forEach(k => {
+    const krw = n(cashBalances[k]);
+    if (krw > 0) concentrationSegs.push({ label: bankNames[k] + "은행", value: krw / tether });
+  });
+  const concTotal = concentrationSegs.reduce((s2, x) => s2 + x.value, 0);
+  const withPct = concentrationSegs.filter(x => x.value > 0).map(x => ({ ...x, pct: concTotal > 0 ? (x.value / concTotal) * 100 : 0 })).sort((a, b) => b.pct - a.pct);
+  const topSeg = withPct[0];
+  const CONCENTRATION_WARN_PCT = 40;
+
+  // E. Yearly / monthly flow summary
+  const yearlyMap = {};
+  const monthlyMap = {};
+  sortedAsc.forEach(r => {
+    const flow = Number(r.flow) || 0;
+    const y = r.date.slice(0, 4);
+    const ym = r.date.slice(0, 7);
+    yearlyMap[y] = (yearlyMap[y] || 0) + flow;
+    monthlyMap[ym] = (monthlyMap[ym] || 0) + flow;
+  });
+  const yearlyRows = Object.keys(yearlyMap).sort((a, b) => b.localeCompare(a)).map(y => ({ key: y, total: yearlyMap[y] }));
+  const monthlyRows = Object.keys(monthlyMap).sort((a, b) => b.localeCompare(a)).map(ym => ({ key: ym, total: monthlyMap[ym] }));
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: "16px", border: breached ? `1px solid ${COLORS.loss}` : `1px solid ${COLORS.panelBorder}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "12px" }}>
+          <span className="lbl">실제 자산 낙폭(MDD) 추적 · 위험 기준선 ATH 대비 -50%</span>
+          <div style={{ display: "flex", gap: "16px", fontSize: "12px" }}>
+            <span>현재 낙폭: <span className="num" style={{ color: currentDD <= -50 ? COLORS.loss : COLORS.text }}>{currentDD.toFixed(1)}%</span></span>
+            <span>역대 최대낙폭: <span className="num" style={{ color: COLORS.loss }}>{maxDD.toFixed(1)}%</span></span>
+          </div>
+        </div>
+        {breached && (
+          <div style={{ background: "rgba(239,83,80,0.12)", border: `1px solid ${COLORS.loss}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "12px", fontSize: "12px", color: COLORS.loss }}>
+            ⚠ 현재 자산이 전고점(ATH) 대비 50% 이상 하락한 상태입니다.
+          </div>
+        )}
+        <PercentLineChart labels={dateLabels} series={[{ key: "dd", label: "ATH 대비 낙폭", color: COLORS.loss, points: drawdownPct }]} refLine={-50} />
+      </div>
+
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>목표(리더보드) vs 실제 성과 비교</div>
+        {hasTargetData ? (
+          <>
+            <PercentLineChart
+              labels={overlayLabels}
+              series={[
+                { key: "target", label: "목표(리더보드 시뮬레이션)", color: COLORS.muted, points: targetPctSeries.map(v => v === null ? 0 : v) },
+                { key: "actual", label: "실제(자산 트래커)", color: COLORS.accent, points: actualPctSeries },
+              ]}
+            />
+            <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "10px", lineHeight: 1.6 }}>
+              복리계산 리더보드 탭에서 설정한 목표 수익률 구간을 기준으로 만든 시뮬레이션과, 자산 변동 트래커에 실제로 기록한 성과를 같은 경과 개월수 기준으로 겹쳐 봅니다. 목표선이 위에 있으면 계획보다 뒤처진 상태, 실제선이 위에 있으면 계획을 앞서는 상태입니다.
+            </div>
+          </>
+        ) : (
+          <div style={{ color: COLORS.muted, fontSize: 12 }}>비교할 만큼 기간이 아직 충분하지 않습니다 (최소 1개월 이상의 기록 필요).</div>
+        )}
+      </div>
+
+      <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "16px" }}>
+        <div className="card">
+          <div className="lbl">실제 승률 (기록 구간 기준)</div>
+          <div className="num" style={{ fontSize: "18px", color: COLORS.text, marginTop: "6px" }}>{winRate.toFixed(1)}%</div>
+          <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "4px" }}>{wins.length}승 {losses.length}패</div>
+        </div>
+        <div className="card">
+          <div className="lbl">평균 상승폭 / 평균 하락폭</div>
+          <div className="num" style={{ fontSize: "16px", marginTop: "6px" }}>
+            <span style={{ color: COLORS.gain }}>+{avgWin.toFixed(2)}%</span> / <span style={{ color: COLORS.loss }}>-{avgLoss.toFixed(2)}%</span>
+          </div>
+        </div>
+        <div className="card">
+          <div className="lbl">손익비 (평균상승/평균하락)</div>
+          <div className="num" style={{ fontSize: "18px", color: COLORS.accent, marginTop: "6px" }}>{payoffRatio ? payoffRatio.toFixed(2) + "R" : "-"}</div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: "16px", border: topSeg && topSeg.pct >= CONCENTRATION_WARN_PCT ? `1px solid ${COLORS.loss}` : `1px solid ${COLORS.panelBorder}` }}>
+        <div className="lbl" style={{ marginBottom: "12px" }}>거래소/은행 자산 집중도</div>
+        {topSeg && topSeg.pct >= CONCENTRATION_WARN_PCT && (
+          <div style={{ background: "rgba(239,83,80,0.12)", border: `1px solid ${COLORS.loss}`, borderRadius: "8px", padding: "10px 14px", marginBottom: "12px", fontSize: "12px", color: COLORS.loss }}>
+            ⚠ {topSeg.label}에 전체 자산의 {topSeg.pct.toFixed(1)}%가 몰려있습니다. 해당 거래소의 출금 중단·해킹 등 카운터파티 리스크에 그만큼 크게 노출됩니다.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {withPct.map((seg, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ width: "90px", fontSize: "12px", color: COLORS.text }}>{seg.label}</span>
+              <div style={{ flex: 1, background: COLORS.bg, borderRadius: "4px", height: "10px", overflow: "hidden" }}>
+                <div style={{ width: `${seg.pct}%`, height: "100%", background: seg.pct >= CONCENTRATION_WARN_PCT ? COLORS.loss : COLORS.accent }} />
+              </div>
+              <span className="num" style={{ fontSize: "11px", color: COLORS.muted, width: "50px", textAlign: "right" }}>{seg.pct.toFixed(1)}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card tableWrap">
+        <div className="lbl" style={{ marginBottom: "10px" }}>연도별 / 월별 입출금 요약</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+          <div>
+            <div style={{ fontSize: "11px", color: COLORS.muted, marginBottom: "6px" }}>연도별</div>
+            <table>
+              <thead><tr><th>연도</th><th>순 입출금</th></tr></thead>
+              <tbody>
+                {yearlyRows.map((r, i) => (
+                  <tr key={i}><td>{r.key}</td><td style={{ color: r.total >= 0 ? COLORS.gain : COLORS.loss }}>{fmtExact(r.total)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: COLORS.muted, marginBottom: "6px" }}>월별</div>
+            <table>
+              <thead><tr><th>월</th><th>순 입출금</th></tr></thead>
+              <tbody>
+                {monthlyRows.map((r, i) => (
+                  <tr key={i}><td>{r.key}</td><td style={{ color: r.total >= 0 ? COLORS.gain : COLORS.loss }}>{fmtExact(r.total)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState("leaderboard");
   const [cashBalances, setCashBalances] = usePersistentState("cashBalances_v1", { kb: "", shinhan: "", hana: "", k: "", toss: "", kakao: "" });
@@ -1193,6 +1366,22 @@ function App() {
   const latestAssetRow = sortedDescForCash[0];
   const latestTether = latestAssetRow ? Number(latestAssetRow.tether) || 1 : 1;
   const { rate: liveTetherRate, status: liveTetherStatus } = useUpbitLiveTether();
+
+  // Leaderboard simulator config, lifted here so the Analysis tab can overlay it against real data
+  const lbInitialBalance = 17000;
+  const lbWithdrawRate = 20;
+  const [lbMonths, setLbMonths] = useState(36);
+  const [lbBoundaries, setLbBoundaries] = useState([12, 24]);
+  const [lbRates, setLbRates] = useState([30, 20, 15]);
+  const [lbTiers, setLbTiers] = useState([
+    { limit: 100000, amount: 2000 }, { limit: 500000, amount: 3000 }, { limit: 1000000, amount: 5000 },
+  ]);
+  const [lbAboveAmount, setLbAboveAmount] = useState(7000);
+  const [lbSafeRate, setLbSafeRate] = useState(2.5);
+  const lbSimResult = useMemo(
+    () => simulate(lbInitialBalance, lbBoundaries, lbRates, lbMonths, lbWithdrawRate, lbTiers, lbAboveAmount),
+    [lbBoundaries, lbRates, lbMonths, lbTiers, lbAboveAmount]
+  );
 
   const exportData = () => {
     const payload = {
@@ -1253,7 +1442,21 @@ function App() {
           <input ref={fileInputRef} type="file" accept="application/json" onChange={handleImportFile} style={{ display: "none" }} />
         </div>
         <div style={{ flex: 1, minWidth: 0, paddingBottom: "40px" }}>
-          {tab === "leaderboard" && <LeaderboardPanel />}
+          {tab === "leaderboard" && (
+            <LeaderboardPanel
+              initialBalance={lbInitialBalance} months={lbMonths} setMonths={setLbMonths}
+              boundaries={lbBoundaries} setBoundaries={setLbBoundaries} rates={lbRates} setRates={setLbRates}
+              tiers={lbTiers} setTiers={setLbTiers} aboveAmount={lbAboveAmount} setAboveAmount={setLbAboveAmount}
+              safeRate={lbSafeRate} setSafeRate={setLbSafeRate} simResult={lbSimResult}
+            />
+          )}
+          {tab === "analysis" && (
+            <AnalysisTab
+              assetRows={assetRowsForCash} cashBalances={cashBalances}
+              liveTetherRate={liveTetherRate} latestTether={latestTether}
+              lbSimResult={lbSimResult} lbInitialBalance={lbInitialBalance} lbMonths={lbMonths}
+            />
+          )}
           {tab === "quotes" && <QuotesTab />}
           {tab === "tracker" && <AssetTrackerTab cashBalances={cashBalances} />}
           {tab === "cash" && <CashTab cashBalances={cashBalances} setCashBalances={setCashBalances} latestAssetRow={latestAssetRow} latestTether={latestTether} liveTetherRate={liveTetherRate} liveTetherStatus={liveTetherStatus} />}
