@@ -686,12 +686,14 @@ function useUpbitTetherCandles() {
       const url = "https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200" + (to ? "&to=" + encodeURIComponent(to) : "");
       return corsFetch(url).then(r => r.json());
     };
+    // Page 1: most recent 200 daily candles
     fetchPage(null)
       .then(page1 => {
         const m = {};
         (page1 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
         const oldest = page1 && page1.length ? page1[page1.length - 1].candle_date_time_utc : null;
         if (!oldest) { setMap(m); setStatus("ready"); return; }
+        // Page 2: another 200 candles further back, to cover earlier dates too
         fetchPage(oldest)
           .then(page2 => {
             (page2 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
@@ -737,7 +739,7 @@ function useBinanceBtcCandles() {
         (rows || []).forEach(k => {
           const d = new Date(k[0]);
           const dateStr = d.toISOString().slice(0, 10);
-          m[dateStr] = Number(k[1]);
+          m[dateStr] = Number(k[1]); // open price
         });
         setMap(m);
         setStatus("ready");
@@ -767,6 +769,7 @@ function AssetTrackerTab({ cashBalances }) {
     return { label: r.date.slice(5), flow: Number(r.flow) || 0, cumFlow: cum };
   });
 
+  // Return-rate series: simple % vs initial seed, and flow-adjusted (chain-linked) %
   const simplePct = totalsAsc.map(v => (initialSeed > 0 ? ((v - initialSeed) / initialSeed) * 100 : 0));
   const twrPct = useMemo(() => {
     let base = initialSeed;
@@ -1263,6 +1266,7 @@ function LeaderboardPanel({
   const { rows: data, ruinMonth } = simResult;
   const last = data[data.length - 1];
 
+  // Overlay: actual tracker balances mapped onto the same month-index axis, with month 0 = May 1st
   const actualOverlay = useMemo(() => {
     if (!assetRows || !assetRows.length) return null;
     const sortedAsc = assetRows.slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -1358,15 +1362,17 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
     );
   }
 
+  // A. MDD tracking (real data), danger threshold = -50% from ATH
   let ath = totals[0];
   const drawdownPct = totals.map(v => {
     if (v > ath) ath = v;
-    return ath > 0 ? ((v - ath) / ath) * 100 : 0;
+    return ath > 0 ? ((v - ath) / ath) * 100 : 0; // negative or 0
   });
   const currentDD = drawdownPct[drawdownPct.length - 1];
   const maxDD = Math.min(...drawdownPct);
   const breached = currentDD <= -50;
 
+  // B. Target vs actual overlay
   const firstDate = new Date(sortedAsc[0].date);
   const lastDate = new Date(sortedAsc[sortedAsc.length - 1].date);
   const elapsedMonths = Math.max(0, Math.floor((lastDate - firstDate) / (30 * 86400000)));
@@ -1389,6 +1395,7 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   }
   const hasTargetData = targetPctSeries.some(v => v !== null);
 
+  // C. Win-rate / payoff stats from actual flow-adjusted period returns
   const periodReturns = [];
   for (let i = 1; i < sortedAsc.length; i++) {
     const prev = totals[i - 1];
@@ -1404,6 +1411,7 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   const avgLoss = losses.length ? (Math.abs(losses.reduce((a, b) => a + b, 0)) / losses.length) * 100 : 0;
   const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : null;
 
+  // D. Concentration warning across exchanges + banks
   const latest = sortedAsc[sortedAsc.length - 1];
   const tether = liveTetherRate || latestTether || Number(latest.tether) || 1;
   const n = (v) => Number(v) || 0;
@@ -1425,6 +1433,7 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   const topSeg = withPct[0];
   const CONCENTRATION_WARN_PCT = 40;
 
+  // E. Yearly / monthly flow summary
   const yearlyMap = {};
   const monthlyMap = {};
   sortedAsc.forEach(r => {
@@ -1555,6 +1564,7 @@ function App() {
   const latestTether = latestAssetRow ? Number(latestAssetRow.tether) || 1 : 1;
   const { rate: liveTetherRate, status: liveTetherStatus } = useUpbitLiveTether();
 
+  // Leaderboard simulator config, lifted here so the Analysis tab can overlay it against real data
   const lbInitialBalance = 17000;
   const lbWithdrawRate = 20;
   const [lbMonths, setLbMonths] = useState(36);
