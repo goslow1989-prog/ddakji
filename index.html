@@ -686,14 +686,12 @@ function useUpbitTetherCandles() {
       const url = "https://api.upbit.com/v1/candles/days?market=KRW-USDT&count=200" + (to ? "&to=" + encodeURIComponent(to) : "");
       return corsFetch(url).then(r => r.json());
     };
-    // Page 1: most recent 200 daily candles
     fetchPage(null)
       .then(page1 => {
         const m = {};
         (page1 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
         const oldest = page1 && page1.length ? page1[page1.length - 1].candle_date_time_utc : null;
         if (!oldest) { setMap(m); setStatus("ready"); return; }
-        // Page 2: another 200 candles further back, to cover earlier dates too
         fetchPage(oldest)
           .then(page2 => {
             (page2 || []).forEach(r => { m[r.candle_date_time_kst.slice(0, 10)] = r.opening_price; });
@@ -739,7 +737,7 @@ function useBinanceBtcCandles() {
         (rows || []).forEach(k => {
           const d = new Date(k[0]);
           const dateStr = d.toISOString().slice(0, 10);
-          m[dateStr] = Number(k[1]); // open price
+          m[dateStr] = Number(k[1]);
         });
         setMap(m);
         setStatus("ready");
@@ -769,7 +767,6 @@ function AssetTrackerTab({ cashBalances }) {
     return { label: r.date.slice(5), flow: Number(r.flow) || 0, cumFlow: cum };
   });
 
-  // Return-rate series: simple % vs initial seed, and flow-adjusted (chain-linked) %
   const simplePct = totalsAsc.map(v => (initialSeed > 0 ? ((v - initialSeed) / initialSeed) * 100 : 0));
   const twrPct = useMemo(() => {
     let base = initialSeed;
@@ -1089,10 +1086,170 @@ function WatchlistTab() {
   );
 }
 
+// ---------- vs2022 (22년 7억 보유의 나와 대결) ----------
+// 2022.01~2026.07은 S&P500 / 나스닥100 실측 월수익률로 7억원을 복리 계산한 값(억원 단위).
+// 2026.08~2030.01은 그 55개월 실측 구간의 기하평균 월수익률을 그대로 복리 연장한 추정치.
+const VS_INDEX_DATA = {"labels": ["2022.01", "2022.02", "2022.03", "2022.04", "2022.05", "2022.06", "2022.07", "2022.08", "2022.09", "2022.10", "2022.11", "2022.12", "2023.01", "2023.02", "2023.03", "2023.04", "2023.05", "2023.06", "2023.07", "2023.08", "2023.09", "2023.10", "2023.11", "2023.12", "2024.01", "2024.02", "2024.03", "2024.04", "2024.05", "2024.06", "2024.07", "2024.08", "2024.09", "2024.10", "2024.11", "2024.12", "2025.01", "2025.02", "2025.03", "2025.04", "2025.05", "2025.06", "2025.07", "2025.08", "2025.09", "2025.10", "2025.11", "2025.12", "2026.01", "2026.02", "2026.03", "2026.04", "2026.05", "2026.06", "2026.07", "2026.08", "2026.09", "2026.10", "2026.11", "2026.12", "2027.01", "2027.02", "2027.03", "2027.04", "2027.05", "2027.06", "2027.07", "2027.08", "2027.09", "2027.10", "2027.11", "2027.12", "2028.01", "2028.02", "2028.03", "2028.04", "2028.05", "2028.06", "2028.07", "2028.08", "2028.09", "2028.10", "2028.11", "2028.12", "2029.01", "2029.02", "2029.03", "2029.04", "2029.05", "2029.06", "2029.07", "2029.08", "2029.09", "2029.10", "2029.11", "2029.12", "2030.01"], "spx": [6.6318, 6.4236, 6.6535, 6.068, 6.0686, 5.5595, 6.0659, 5.8087, 5.2662, 5.687, 5.9929, 5.6393, 5.9879, 5.8316, 6.0363, 6.1244, 6.1397, 6.5369, 6.7402, 6.6209, 6.2985, 6.1599, 6.7094, 7.006, 7.1173, 7.4853, 7.7174, 7.3963, 7.7513, 8.0203, 8.1109, 8.2959, 8.4634, 8.3797, 8.8598, 8.6383, 8.8716, 8.7456, 8.2427, 8.1801, 8.6831, 9.1138, 9.3116, 9.4894, 9.8244, 10.0474, 10.0605, 10.0555, 10.1932, 10.1045, 9.5902, 10.5895, 11.1349, 11.0169, 10.9552, 11.0447, 11.135, 11.2261, 11.3179, 11.4104, 11.5037, 11.5978, 11.6926, 11.7882, 11.8846, 11.9818, 12.0798, 12.1786, 12.2782, 12.3785, 12.4798, 12.5818, 12.6847, 12.7884, 12.893, 12.9984, 13.1047, 13.2118, 13.3199, 13.4288, 13.5386, 13.6493, 13.7609, 13.8734, 13.9869, 14.1012, 14.2166, 14.3328, 14.45, 14.5682, 14.6873, 14.8074, 14.9284, 15.0505, 15.1736, 15.2977, 15.4227], "ndx": [6.4036, 6.1065, 6.3642, 5.5133, 5.4223, 4.9343, 5.5536, 5.2637, 4.7057, 4.8921, 5.1601, 4.6926, 5.191, 5.1656, 5.6542, 5.6819, 6.1143, 6.5111, 6.7592, 6.6497, 6.3126, 6.1813, 6.8408, 7.2177, 7.3513, 7.7401, 7.8307, 7.4815, 7.9513, 8.4427, 8.3051, 8.3964, 8.6047, 8.5315, 8.9777, 9.0127, 9.2128, 8.9585, 8.2696, 8.3953, 9.1543, 9.7282, 9.9598, 10.0444, 10.5868, 11.0918, 10.9099, 10.8303, 10.9602, 10.706, 10.1824, 11.775, 13.0102, 12.9854, 12.2634, 12.3891, 12.5161, 12.6443, 12.7739, 12.9048, 13.037, 13.1706, 13.3056, 13.4419, 13.5796, 13.7188, 13.8594, 14.0014, 14.1448, 14.2898, 14.4362, 14.5841, 14.7336, 14.8846, 15.0371, 15.1912, 15.3468, 15.5041, 15.6629, 15.8234, 15.9856, 16.1494, 16.3149, 16.482, 16.6509, 16.8216, 16.9939, 17.1681, 17.344, 17.5217, 17.7012, 17.8826, 18.0659, 18.251, 18.438, 18.6269, 18.8178], "splitIdx": 54};
+
+function VsIndexChart({ labels, spx, ndx, splitIdx, actual }) {
+  const W = 800, H = 280;
+  const padL = 55, padR = 10, padT = 14, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const containerRef = useRef(null);
+  const [hover, setHover] = useState(null);
+  const n = labels.length;
+  const actualVals = actual.filter(v => v != null);
+  const maxY = (Math.max(...spx, ...ndx, ...(actualVals.length ? actualVals : [0])) || 1) * 1.08;
+  const x = (i) => padL + (i / (n - 1)) * innerW;
+  const y = (v) => padT + innerH - (v / maxY) * innerH;
+  const pathFor = (arr, fromIdx, toIdx) => {
+    let d = "";
+    for (let i = fromIdx; i <= toIdx; i++) d += `${i === fromIdx ? "M" : "L"} ${x(i)} ${y(arr[i])} `;
+    return d;
+  };
+  const spxHist = pathFor(spx, 0, splitIdx), spxProj = pathFor(spx, splitIdx, n - 1);
+  const ndxHist = pathFor(ndx, 0, splitIdx), ndxProj = pathFor(ndx, splitIdx, n - 1);
+  let actualPath = "", started = false;
+  actual.forEach((v, i) => {
+    if (v == null) { started = false; return; }
+    actualPath += `${started ? "L" : "M"} ${x(i)} ${y(v)} `;
+    started = true;
+  });
+  const handleMove = (e) => {
+    const rect = containerRef.current.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.round(frac * (n - 1)));
+  };
+  const tickEvery = 6;
+  return (
+    <div ref={containerRef} style={{ position: "relative" }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
+          <line key={i} x1={padL} x2={W - padR} y1={padT + innerH * f} y2={padT + innerH * f} stroke="#1F2530" strokeDasharray="3 3" />
+        ))}
+        {[0, 0.5, 1].map((f, i) => {
+          const val = maxY * (1 - f);
+          return <text key={i} x={padL - 8} y={padT + innerH * f + 4} textAnchor="end" fontSize="10" fill="#6B7280" fontFamily="monospace">{val.toFixed(1)}억</text>;
+        })}
+        <path d={spxHist} fill="none" stroke="#F2B84B" strokeWidth="2" />
+        <path d={spxProj} fill="none" stroke="#F2B84B" strokeWidth="2" strokeDasharray="5 4" />
+        <path d={ndxHist} fill="none" stroke="#4BD0E0" strokeWidth="2" />
+        <path d={ndxProj} fill="none" stroke="#4BD0E0" strokeWidth="2" strokeDasharray="5 4" />
+        {actualPath && <path d={actualPath} fill="none" stroke={COLORS.loss} strokeWidth="2.5" />}
+        {actual.map((v, i) => v != null && <circle key={i} cx={x(i)} cy={y(v)} r="3.5" fill={COLORS.loss} />)}
+        <line x1={x(splitIdx)} x2={x(splitIdx)} y1={padT} y2={padT + innerH} stroke="#374151" strokeDasharray="2 2" />
+        {labels.map((l, i) => i % tickEvery === 0 && (
+          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="9" fill="#6B7280" fontFamily="monospace">{l}</text>
+        ))}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={padT} y2={padT + innerH} stroke="#4C82FB" strokeWidth="1" />}
+      </svg>
+      {hover !== null && (
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#0B0E14", border: "1px solid #1F2530", borderRadius: "6px", padding: "6px 10px", fontSize: "11px", fontFamily: "monospace", color: "#D1D4DC", pointerEvents: "none", lineHeight: 1.6 }}>
+          <div>{labels[hover]}</div>
+          <div style={{ color: "#F2B84B" }}>S&P500: {spx[hover].toFixed(2)}억</div>
+          <div style={{ color: "#4BD0E0" }}>나스닥100: {ndx[hover].toFixed(2)}억</div>
+          {actual[hover] != null && <div style={{ color: COLORS.loss }}>실제: {actual[hover].toFixed(2)}억</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VsIndexTab({ assetRows, latestTether, liveTetherRate }) {
+  const [milestones, setMilestones] = usePersistentState("vs2022Milestones_v1", [
+    { ym: "2022-01", amt: 7.0 },
+    { ym: "2024-07", amt: 4.5 },
+    { ym: "2024-08", amt: 1.7 },
+  ]);
+  const [dateInput, setDateInput] = useState("");
+  const [amtInput, setAmtInput] = useState("");
+
+  const labels = VS_INDEX_DATA.labels, splitIdx = VS_INDEX_DATA.splitIdx;
+  const spx = VS_INDEX_DATA.spx, ndx = VS_INDEX_DATA.ndx;
+  const effectiveTether = liveTetherRate || latestTether || 1350;
+
+  const actualMap = useMemo(() => {
+    const map = {};
+    milestones.forEach(m => { map[m.ym.replace("-", ".")] = m.amt; });
+    if (assetRows && assetRows.length) {
+      assetRows.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(r => {
+        const ym = r.date.slice(0, 7).replace("-", ".");
+        map[ym] = computeTotalUSD(r) * effectiveTether / 1e8;
+      });
+    }
+    return map;
+  }, [milestones, assetRows, effectiveTether]);
+
+  const actualSeries = labels.map(l => actualMap[l] != null ? actualMap[l] : null);
+  const spxNow = spx[splitIdx], ndxNow = ndx[splitIdx];
+  const spx2030 = spx[spx.length - 1], ndx2030 = ndx[ndx.length - 1];
+  const actualEntries = Object.entries(actualMap).sort((a, b) => a[0].localeCompare(b[0]));
+  const latestActual = actualEntries.length ? actualEntries[actualEntries.length - 1] : null;
+
+  const addMilestone = () => {
+    if (!dateInput || amtInput === "") return;
+    const next = milestones.filter(m => m.ym !== dateInput);
+    next.push({ ym: dateInput, amt: parseFloat(amtInput) });
+    next.sort((a, b) => a.ym.localeCompare(b.ym));
+    setMilestones(next);
+    setAmtInput("");
+  };
+  const removeMilestone = (ym) => setMilestones(milestones.filter(m => m.ym !== ym));
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "10px" }}>2022.01.01 7억을 지수에 넣어뒀다면 vs 실제 나</div>
+        <div style={{ fontSize: "12px", color: COLORS.muted, lineHeight: 1.6 }}>
+          같은 7억을 S&P500 / 나스닥100 추종 ETF에 넣고 그대로 뒀을 때의 월별 잔고(실측 2022.01~2026.07, 이후는 그 55개월 실측 기하평균 수익률로 연장한 추정치)를, 실제 계좌 기록과 같은 그래프에 겹쳐봅니다.
+        </div>
+      </div>
+
+      <div className="grid5" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginBottom: "16px" }}>
+        <div className="card"><div className="lbl">시작 (2022.01)</div><div className="num" style={{ fontSize: "16px", marginTop: "6px" }}>7.00억</div></div>
+        <div className="card"><div className="lbl">S&P500 · {labels[splitIdx]}</div><div className="num" style={{ fontSize: "16px", color: "#F2B84B", marginTop: "6px" }}>{spxNow.toFixed(2)}억</div></div>
+        <div className="card"><div className="lbl">나스닥100 · {labels[splitIdx]}</div><div className="num" style={{ fontSize: "16px", color: "#4BD0E0", marginTop: "6px" }}>{ndxNow.toFixed(2)}억</div></div>
+        <div className="card"><div className="lbl">실제 최신 기록</div><div className="num" style={{ fontSize: "16px", color: COLORS.loss, marginTop: "6px" }}>{latestActual ? `${latestActual[1].toFixed(2)}억 (${latestActual[0]})` : "-"}</div></div>
+      </div>
+
+      <div className="card" style={{ marginBottom: "16px" }}>
+        <div className="lbl" style={{ marginBottom: "4px" }}>2030.01 예상: S&P500 {spx2030.toFixed(1)}억 · 나스닥100 {ndx2030.toFixed(1)}억</div>
+        <div style={{ display: "flex", gap: "16px", margin: "6px 0 12px", fontSize: "11px" }}>
+          <span><span style={{ color: "#F2B84B" }}>■</span> S&P500 (점선=추정)</span>
+          <span><span style={{ color: "#4BD0E0" }}>■</span> 나스닥100/QQQ (점선=추정)</span>
+          <span><span style={{ color: COLORS.loss }}>●</span> 실제 계좌</span>
+        </div>
+        <VsIndexChart labels={labels} spx={spx} ndx={ndx} splitIdx={splitIdx} actual={actualSeries} />
+      </div>
+
+      <div className="card">
+        <div className="lbl" style={{ marginBottom: "12px" }}>실제 계좌 기록 추가 (트래커에 없는 과거 시점용)</div>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "14px" }}>
+          <input type="month" value={dateInput} onChange={(e) => setDateInput(e.target.value)} min="2022-01" max="2030-01" style={{ maxWidth: "160px" }} />
+          <input type="number" step="0.01" placeholder="잔고 (억원)" value={amtInput} onChange={(e) => setAmtInput(e.target.value)} style={{ maxWidth: "160px" }} />
+          <button className="smallBtn" onClick={addMilestone}>기록 추가</button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {milestones.slice().sort((a, b) => a.ym.localeCompare(b.ym)).map((m, i) => (
+            <div key={i} style={{ background: COLORS.bg, border: `1px solid ${COLORS.panelBorder}`, borderRadius: "20px", padding: "6px 8px 6px 12px", fontSize: "12px", fontFamily: "monospace", display: "flex", alignItems: "center", gap: "8px" }}>
+              {m.ym} · {m.amt.toFixed(2)}억
+              <button onClick={() => removeMilestone(m.ym)} style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer" }}>×</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: "11px", color: COLORS.muted, marginTop: "12px", lineHeight: 1.6 }}>
+          자산 변동 트래커 탭에 기록을 남기면(BTC·키움·거래소 잔고 합산 → 원화 환산) 이 그래프에 자동으로 반영됩니다. 여기 입력한 값은 트래커 기록이 없는 과거 구간(예: 2022~2024)을 채우는 용도이며, 같은 달에 트래커 기록이 있으면 트래커 값이 우선합니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Root Dashboard ----------
 const NAV_ITEMS = [
   { key: "leaderboard", label: "복리계산 리더보드" },
   { key: "analysis", label: "성과 분석" },
+  { key: "vs2022", label: "22년 7억 보유의 나와 대결" },
   { key: "quotes", label: "투자 명언" },
   { key: "tracker", label: "자산 변동 트래커" },
   { key: "cash", label: "현금" },
@@ -1106,7 +1263,6 @@ function LeaderboardPanel({
   const { rows: data, ruinMonth } = simResult;
   const last = data[data.length - 1];
 
-  // Overlay: actual tracker balances mapped onto the same month-index axis, with month 0 = May 1st
   const actualOverlay = useMemo(() => {
     if (!assetRows || !assetRows.length) return null;
     const sortedAsc = assetRows.slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -1202,17 +1358,15 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
     );
   }
 
-  // A. MDD tracking (real data), danger threshold = -50% from ATH
   let ath = totals[0];
   const drawdownPct = totals.map(v => {
     if (v > ath) ath = v;
-    return ath > 0 ? ((v - ath) / ath) * 100 : 0; // negative or 0
+    return ath > 0 ? ((v - ath) / ath) * 100 : 0;
   });
   const currentDD = drawdownPct[drawdownPct.length - 1];
   const maxDD = Math.min(...drawdownPct);
   const breached = currentDD <= -50;
 
-  // B. Target vs actual overlay
   const firstDate = new Date(sortedAsc[0].date);
   const lastDate = new Date(sortedAsc[sortedAsc.length - 1].date);
   const elapsedMonths = Math.max(0, Math.floor((lastDate - firstDate) / (30 * 86400000)));
@@ -1235,7 +1389,6 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   }
   const hasTargetData = targetPctSeries.some(v => v !== null);
 
-  // C. Win-rate / payoff stats from actual flow-adjusted period returns
   const periodReturns = [];
   for (let i = 1; i < sortedAsc.length; i++) {
     const prev = totals[i - 1];
@@ -1251,7 +1404,6 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   const avgLoss = losses.length ? (Math.abs(losses.reduce((a, b) => a + b, 0)) / losses.length) * 100 : 0;
   const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : null;
 
-  // D. Concentration warning across exchanges + banks
   const latest = sortedAsc[sortedAsc.length - 1];
   const tether = liveTetherRate || latestTether || Number(latest.tether) || 1;
   const n = (v) => Number(v) || 0;
@@ -1273,7 +1425,6 @@ function AnalysisTab({ assetRows, cashBalances, liveTetherRate, latestTether, lb
   const topSeg = withPct[0];
   const CONCENTRATION_WARN_PCT = 40;
 
-  // E. Yearly / monthly flow summary
   const yearlyMap = {};
   const monthlyMap = {};
   sortedAsc.forEach(r => {
@@ -1404,7 +1555,6 @@ function App() {
   const latestTether = latestAssetRow ? Number(latestAssetRow.tether) || 1 : 1;
   const { rate: liveTetherRate, status: liveTetherStatus } = useUpbitLiveTether();
 
-  // Leaderboard simulator config, lifted here so the Analysis tab can overlay it against real data
   const lbInitialBalance = 17000;
   const lbWithdrawRate = 20;
   const [lbMonths, setLbMonths] = useState(36);
@@ -1495,6 +1645,7 @@ function App() {
               lbSimResult={lbSimResult} lbInitialBalance={lbInitialBalance} lbMonths={lbMonths}
             />
           )}
+          {tab === "vs2022" && <VsIndexTab assetRows={assetRowsForCash} latestTether={latestTether} liveTetherRate={liveTetherRate} />}
           {tab === "quotes" && <QuotesTab />}
           {tab === "tracker" && <AssetTrackerTab cashBalances={cashBalances} />}
           {tab === "cash" && <CashTab cashBalances={cashBalances} setCashBalances={setCashBalances} latestAssetRow={latestAssetRow} latestTether={latestTether} liveTetherRate={liveTetherRate} liveTetherStatus={liveTetherStatus} />}
